@@ -8,8 +8,8 @@ the pinned artifacts in `test-vectors/storage-spi/`.
 
 | Lane | Branch | Head | Suite |
 |---|---|---|---|
-| Java (`ai.pipestream.quic.storage`) | `agent/storage-spi-java` | `cfe3c1ed` | 225 tests, 0 failures (`mvn -q test -Dtest='ai.pipestream.quic.storage.**'`) |
-| Rust (`pipestream-storage`) | `agent/storage-spi-rust` | `f7a37288` | 28+ tests incl. docker contract runs, 0 failures; `clippy -D warnings` clean |
+| Java (`ai.pipestream.quic.storage`) | `agent/storage-spi-java` | `1996085f` | 409 tests, 0 failures (`mvn -q test -Dtest='ai.pipestream.quic.storage.**'`) |
+| Rust (`pipestream-storage`) | `agent/storage-spi-rust` | `1cab5237` | 81 tests incl. docker contract runs + adversarial/concurrency/leak/property suites, 0 failures; `clippy -D warnings` clean |
 
 Both lanes implement all six backends — in-memory, filesystem, Postgres, S3
 (object role), Kafka (journal role), MongoDB — against the pinned decisions in
@@ -47,6 +47,17 @@ interlock across languages is fcntl `F_SETLK` on both sides (pinned decision 7).
   store-owned state only (payload rehash + entity count) and returns the
   recorded seal verbatim — the protocol SCOPE_DIGEST covers statuses the store
   does not hold.
+- Adversarial swarm round (2026-09-20/21): dedicated adversarial, concurrency,
+  leak-audit, and property suites on both lanes. Java: 8 defects fixed
+  (sealed-retire scope-locality `fbc5ddb8`/`aa056e1b`, forged-entity mapping
+  `87f95782`, journal marker data-loss guard + crafted mid-log garbage +
+  partial-magic mapping `ac06a4ab`, Postgres bootstrap connection leak
+  `5ed7108d`, DurableHost close-abandonment `fe219e73`, cold-root open race
+  mapping `7292b74b`), 406-test gate green twice. Rust: no product defects;
+  the four special-attention items were confirmed correct with named tests.
+- Cross-language parity follow-up: the Rust journal adopted the Java marker
+  semantics (a wiped log on an initialized root is CORRUPT, never a silent
+  fresh start) in `2f961afb`, so both lanes fail data loss identically.
 
 ## SPI-plane certification runs (2026-09-20)
 
@@ -69,10 +80,25 @@ from `agent/storage-spi-rust` (`06c27638`) and `agent/storage-spi-java`
 | postgres | `durable-18d711b081707730` | 62 PASS + 1 flake + 1 real FAIL: r-memory-ladder — the Rust postgres backend buffered whole payloads (BYTEA materialization); fixed by `a011e529` (honest streaming in postgres/s3/mongo) |
 | postgres | `durable-18d7160e15db8238` | 63 PASS + g2 flake only; memory ladder flat (streaming verified by the matrix) |
 | postgres | `durable-18d718628b307c3e` | 63 PASS + g2 flake only |
+| s3 (docker quay.io/minio/minio) | `durable-18d73070ac406e00` | 55 PASS + 8 FAIL: the matrix caught two Rust S3 writer defects the contract suite missed — a panic on 5-10 MiB payloads (single part under the multipart threshold with a deferred part 1; fixed by `4251690e`) and a panic on zero-byte payloads (entity header staged lazily on the first `write()`, which never comes for an empty payload; fixed by `4a6ef2dd`, with a contract-suite regression case every backend now runs) |
+| s3 | `durable-18d73368a32a51c7` | invalid: operator error — the conformance server binary is package `pipestream-server`, and rebuilding `-p pipestream-server` was missed (only `-p pipestream-quinn`, the quic library), so the run exercised the pre-fix binary; recorded so the trap is named |
+| s3 | `durable-18d735d11e098c40` | 63 PASS + g2 flake only; row-for-row identical to the postgres pattern |
+| mongo (docker mongo:8.2) | `durable-18d7380f776e6c78` | 19 PASS: cross-language schema collision in the shared probe database — the lanes' mongo document shapes differ (Rust: compound `_id`; Java: top-level `scope_path`), and Java's `listScopes` distinct NPE'd on Rust documents; fixed by `14938090` (typed distinct + partial unique indexes, Java) and `2f961afb` ($type-filtered distinct, Rust) so each lane's global enumeration sees only its own schema |
+| mongo | `durable-18d73c1789d2c4fc` | 61 PASS + 3 FAIL: (1) the Java backend stored payloads inline in one BSON document, so 16 MiB entities exceeded the document limit — fixed by `073c1ce0` (1 MiB chunking, streamed reads/verify, retire sweeps chunks); (2) both r-rows failed at their closing step: the authority SPI plane's orphan sweep treated the shared database as single-owner and a concurrent installation's sweep retired this installation's committed entities — fixed by `dc24816c` (Rust) and `1996085f` (Java mirror): the plane scope's first component is now an installation tag from the store binding, and sweeps skip every other namespace |
+| mongo | `durable-18d753f0bf0b1623` | **GREEN: exit 0, 64 PASS + 4 named waivers, all directions of all rows** — including g2-kill-after-admission-before-publication (quiet host) and the two previously-failing resource rows |
 
 Postgres certification statement: row-for-row identical to the certified fs
 plane, including the flake pattern; the only backend-caused failure found
 (buffered payloads) was fixed and its fix is matrix-verified.
+
+S3 certification statement: after the two matrix-caught writer fixes, the S3
+object plane is row-for-row identical to the certified fs plane (63/64, only
+the documented g2 host-load flake, which is plane-independent).
+
+Mongo certification statement: three matrix-caught defects (schema-collision
+NPE, the 16 MiB document limit, and the shared-database sweep race) were each
+fixed with pinning tests in both lanes where applicable; the rerun is fully
+green with zero flake allowances.
 
 ## Known limits
 
