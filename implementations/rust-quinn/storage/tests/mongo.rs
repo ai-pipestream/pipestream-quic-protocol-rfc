@@ -6,7 +6,7 @@
 mod common;
 
 use pipestream_storage::contract::{self};
-use pipestream_storage::{MongoConfig, MongoStore};
+use pipestream_storage::{MongoConfig, MongoStore, ObjectStore, ScopePath, sha256};
 
 fn open_with_retry(config: &MongoConfig) -> MongoStore {
     let mut attempt = 0;
@@ -117,4 +117,60 @@ fn mongo_chunked_streaming_put_roundtrip() {
     let mut back = Vec::new();
     std::io::Read::read_to_end(&mut reader, &mut back).unwrap();
     assert_eq!(back.len(), total);
+}
+
+
+/// Schema-collision regression: a database shared with the Java lane holds
+/// Java-shaped documents (ObjectId _id, scope_path as a top-level string).
+/// list_scopes must enumerate only Rust-schema documents and never error.
+#[test]
+fn list_scopes_ignores_java_shaped_documents() {
+    let Some(mongo) = common::MongoContainer::start() else {
+        eprintln!("docker unavailable: skipping schema-collision test");
+        return;
+    };
+    let config = mongo.fresh_config();
+    let mut store = open_with_retry(&config);
+    // One Rust-shaped entity.
+    let scope = ScopePath::root(0);
+    let payload = b"rust-shaped".to_vec();
+    store.put(&scope, 1, &payload, &sha256(&payload)).unwrap();
+    // Java-shaped documents in the same collections.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let client = mongodb::Client::with_uri_str(&config.uri).await.unwrap();
+        let db = client.database(&config.database);
+        db.collection::<mongodb::bson::Document>("objects")
+            .insert_one(mongodb::bson::doc! {
+                "scope_path": "9",
+                "bucket": "ab",
+                "entity_id": 1_i64,
+                "digest": mongodb::bson::Binary {
+                    subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                    bytes: vec![0u8; 32],
+                },
+                "payload": mongodb::bson::Binary {
+                    subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                    bytes: b"java-shaped".to_vec(),
+                },
+            })
+            .await
+            .unwrap();
+        db.collection::<mongodb::bson::Document>("seals")
+            .insert_one(mongodb::bson::doc! {
+                "scope_path": "9",
+                "digest": mongodb::bson::Binary {
+                    subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                    bytes: vec![0u8; 32],
+                },
+                "entity_count": 1_i64,
+            })
+            .await
+            .unwrap();
+    });
+    let scopes = store.list_scopes().expect("list_scopes");
+    assert_eq!(scopes, vec![scope]);
 }

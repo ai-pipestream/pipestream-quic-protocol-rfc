@@ -56,6 +56,11 @@ const OBJECTS_DIR: &str = "objects";
 const SEAL_FILE_NAME: &str = "scope.seal";
 const JOURNAL_DIR: &str = "journal";
 const JOURNAL_LOG_NAME: &str = "journal.log";
+/// Presence of this file means the journal was initialized: a log that is
+/// missing or empty afterward means records were lost, which is Corrupt,
+/// not a fresh start. Written after the magic is durable. Content: the
+/// journal magic plus a newline.
+const JOURNAL_MARKER_NAME: &str = "journal.marker";
 const WRITER_LOCK_NAME: &str = "writer.lock";
 const SCRATCH_PREFIX: &str = "write-";
 const SCRATCH_SUFFIX: &str = ".tmp";
@@ -1024,22 +1029,50 @@ fn read_seal_record(path: &Path, scope: &ScopePath) -> Result<SealRecord, Storag
 /// trailing record: bytes after the last checksummed record never belonged
 /// to an append that returned success.
 fn recover_journal(log_path: &Path) -> Result<JournalIndex, StorageError> {
+    let marker_path = log_path.with_file_name(JOURNAL_MARKER_NAME);
+    let marker_live = match std::fs::read(&marker_path) {
+        Ok(bytes) => {
+            if bytes != marker_content() {
+                return Err(StorageError::corrupt("journal marker content changed"));
+            }
+            true
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(StorageError::from(e)),
+    };
+    let log_exists = log_path.is_file();
+    let size = if log_exists {
+        std::fs::metadata(log_path)?.len()
+    } else {
+        0
+    };
+    if size == 0 || !log_exists {
+        if marker_live {
+            // The root was initialized; a vanished log means lost records.
+            return Err(StorageError::corrupt(format!(
+                "journal log missing or empty under an initialized root ({})",
+                log_path.display()
+            )));
+        }
+        // Fresh root: create the log with its magic, then the marker.
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(log_path)?;
+            Write::write_all(&mut file, JOURNAL_MAGIC)?;
+            file.sync_all()?;
+        }
+        write_marker(&marker_path)?;
+        return Ok(JournalIndex::default());
+    }
     let mut file = OpenOptions::new()
-        .create(true)
         .read(true)
         .write(true)
         .truncate(false)
         .open(log_path)?;
-    let size = file.metadata()?.len();
     let mut index = JournalIndex::default();
-    if size == 0 {
-        Write::write_all(&mut file, JOURNAL_MAGIC)?;
-        file.sync_all()?;
-        if let Some(parent) = log_path.parent() {
-            sync_dir(parent)?;
-        }
-        return Ok(index);
-    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     if bytes.len() < JOURNAL_MAGIC.len() || &bytes[..JOURNAL_MAGIC.len()] != JOURNAL_MAGIC {
@@ -1060,7 +1093,25 @@ fn recover_journal(log_path: &Path) -> Result<JournalIndex, StorageError> {
         file.set_len(last_good as u64)?;
         file.sync_all()?;
     }
+    if !marker_live {
+        // Legacy log predating markers: adopted once its records verify.
+        write_marker(&marker_path)?;
+    }
     Ok(index)
+}
+
+fn marker_content() -> Vec<u8> {
+    let mut content = JOURNAL_MAGIC.to_vec();
+    content.push(b'\n');
+    content
+}
+
+fn write_marker(marker_path: &Path) -> Result<(), StorageError> {
+    std::fs::write(marker_path, marker_content())?;
+    if let Some(parent) = marker_path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(())
 }
 
 /// Validates the record at `position`, folding it into the index. Returns
