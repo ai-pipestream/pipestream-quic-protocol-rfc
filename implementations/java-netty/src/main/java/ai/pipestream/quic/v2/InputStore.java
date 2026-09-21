@@ -2,6 +2,9 @@ package ai.pipestream.quic.v2;
 
 import static ai.pipestream.quic.v2.Records.*;
 
+import ai.pipestream.quic.storage.ObjectStore;
+import ai.pipestream.quic.storage.ScopePath;
+import ai.pipestream.quic.storage.StorageException;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -40,10 +43,13 @@ import java.util.UUID;
  */
 final class InputStore implements AutoCloseable {
   private static final byte[] MAGIC = {'P', 'S', 'J', 'V', '2', 'I', '0', '1'};
+  private static final byte[] SPI_MAGIC = {'P', 'S', 'J', 'V', '2', 'I', 'S', 'P'};
   private static final byte[] FUNDING_MAGIC = {'P', 'S', 'J', 'V', '2', 'R', '0', '1'};
   private static final int METADATA_LIMIT = 8192;
   private static final int PREFIX = 12;
   private static final int CHECKSUM = 32;
+  private static final int SPI_DIGEST = 32;
+  private static final long SPI_INPUT_ENTITY = 0;
   private static final int BLOCK = 8192;
   private static final int OUTPUT_OVERHEAD = PREFIX + METADATA_LIMIT + CHECKSUM;
   private static final String FORMAT = "pipestream-java-v2-input-store-4";
@@ -210,6 +216,8 @@ final class InputStore implements AutoCloseable {
   private final FileLock lock;
   private final Probe probe;
   private final OutputStore outputs;
+  /** SPI object plane: payload bytes for installed objects, null on the v2 plane. */
+  private final ObjectStore spi;
   private long bytes;
   private int files;
   private int handles;
@@ -251,7 +259,8 @@ final class InputStore implements AutoCloseable {
       UUID authorityIdentity,
       FileChannel channel,
       FileLock lock,
-      Probe probe) {
+      Probe probe,
+      ObjectStore spi) {
     this.root = root;
     this.limits = limits;
     this.identity = identity;
@@ -259,6 +268,7 @@ final class InputStore implements AutoCloseable {
     this.lockChannel = channel;
     this.lock = lock;
     this.probe = probe;
+    this.spi = spi;
     this.outputs = new OutputStore(this, root);
   }
 
@@ -305,15 +315,62 @@ final class InputStore implements AutoCloseable {
     return initialize(directory, limits, authorityIdentity, null);
   }
 
+  /**
+   * Install immutable storage whose input payload plane is an SPI object
+   * store. Envelope identity, funding, quotas, pins, orphan charging, and the
+   * recovery grammar stay with this store; payload bytes live in the backend
+   * under one scope per operation (entity 0), with a small sidecar per object
+   * preserving the identity audit.
+   *
+   * @param directory new input-store directory
+   * @param limits immutable file policy
+   * @param authorityIdentity persistent database installation identity
+   * @param spi exclusively owned SPI payload backend
+   * @return exclusively owned store
+   * @throws IOException installation failure
+   */
+  static InputStore initializeForAuthority(
+      Path directory, Limits limits, UUID authorityIdentity, ObjectStore spi) throws IOException {
+    return initializeForAuthority(directory, limits, authorityIdentity, spi, null);
+  }
+
+  /**
+   * Initialize an SPI-plane store with a package-local interruption observer,
+   * for crash-row probes.
+   *
+   * @param directory new input-store directory
+   * @param limits immutable file policy
+   * @param authorityIdentity persistent database installation identity
+   * @param spi exclusively owned SPI payload backend
+   * @param probe fault observer, or null
+   * @return exclusively owned store
+   * @throws IOException installation failure
+   */
+  static InputStore initializeForAuthority(
+      Path directory, Limits limits, UUID authorityIdentity, ObjectStore spi, Probe probe)
+      throws IOException {
+    Objects.requireNonNull(authorityIdentity);
+    Objects.requireNonNull(spi);
+    if (authorityIdentity.equals(new UUID(0, 0)))
+      throw new IllegalArgumentException("zero authority installation identity");
+    return initialize(directory, limits, authorityIdentity, probe, spi);
+  }
+
   private static InputStore initialize(
       Path directory, Limits limits, UUID authorityIdentity, Probe probe) throws IOException {
+    return initialize(directory, limits, authorityIdentity, probe, null);
+  }
+
+  private static InputStore initialize(
+      Path directory, Limits limits, UUID authorityIdentity, Probe probe, ObjectStore spi)
+      throws IOException {
     Objects.requireNonNull(limits);
     Path requested = directory.toAbsolutePath().normalize();
     Files.createDirectory(
         requested,
         PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
     sync(requested.getParent());
-    return acquire(requested, limits, true, authorityIdentity, probe);
+    return acquire(requested, limits, true, authorityIdentity, probe, spi);
   }
 
   /**
@@ -340,11 +397,35 @@ final class InputStore implements AutoCloseable {
    */
   static InputStore open(Path directory, Limits limits, Probe probe) throws IOException {
     Objects.requireNonNull(limits);
-    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe);
+    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, null);
+  }
+
+  /**
+   * Recover an installation whose input payload plane is the given SPI object
+   * store; see {@link #initializeForAuthority(Path, Limits, UUID, ObjectStore)}
+   * for the plane contract.
+   *
+   * @param directory existing input store
+   * @param limits exact retained policy
+   * @param spi exclusively owned SPI payload backend
+   * @param probe fault observer, or null
+   * @return audited exclusive store
+   * @throws IOException recovery failure
+   */
+  static InputStore open(Path directory, Limits limits, ObjectStore spi, Probe probe)
+      throws IOException {
+    Objects.requireNonNull(limits);
+    Objects.requireNonNull(spi);
+    return acquire(directory.toAbsolutePath().normalize(), limits, false, null, probe, spi);
   }
 
   private static InputStore acquire(
-      Path requested, Limits limits, boolean initialize, UUID configuredAuthority, Probe probe)
+      Path requested,
+      Limits limits,
+      boolean initialize,
+      UUID configuredAuthority,
+      Probe probe,
+      ObjectStore spi)
       throws IOException {
     if (!Files.isDirectory(requested, LinkOption.NOFOLLOW_LINKS))
       throw new IOException("V2 input store requires a real existing directory");
@@ -410,7 +491,7 @@ final class InputStore implements AutoCloseable {
         }
       }
       InputStore store =
-          new InputStore(root, limits, identity, authorityIdentity, channel, lock, probe);
+          new InputStore(root, limits, identity, authorityIdentity, channel, lock, probe, spi);
       store.recover();
       return store;
     } catch (IOException | RuntimeException failure) {
@@ -598,7 +679,8 @@ final class InputStore implements AutoCloseable {
     Envelope expected = envelope(context, header);
     Path path = objectPath(expected);
     if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-    inspect(path, expected, true);
+    if (spiPlane()) inspectSidecar(path, expected, true);
+    else inspect(path, expected, true);
     // Visibility after an interrupted installation does not prove its force or directory sync.
     forceFile(path);
     sync(root.resolve("objects"));
@@ -1071,7 +1153,9 @@ final class InputStore implements AutoCloseable {
           Envelope envelope =
               funding
                   ? inspectFunding(path, null).envelope()
-                  : inspect(path, null, false).envelope();
+                  : spiPlane()
+                      ? inspectSidecar(path, null, false).envelope()
+                      : inspect(path, null, false).envelope();
           OrphanCandidate candidate =
               new OrphanCandidate(
                   identity,
@@ -1160,7 +1244,8 @@ final class InputStore implements AutoCloseable {
         Funding retained = inspectFunding(path, expected);
         charged = new OrphanCharge(candidate, retained.chargedBytes(), retained.chargedFiles());
       } else {
-        Inspected retained = inspect(path, expected, true);
+        Inspected retained =
+            spiPlane() ? inspectSidecar(path, expected, true) : inspect(path, expected, true);
         charged = new OrphanCharge(candidate, retained.size(), 1);
       }
       OrphanCharge pending = orphanRemovals.putIfAbsent(path, charged);
@@ -1171,9 +1256,16 @@ final class InputStore implements AutoCloseable {
     }
     sync(path.getParent());
     reached(Phase.ORPHAN_SYNCED);
+    // Sidecar first, payload second: a kill between leaves only a swept orphan payload.
+    if (!candidate.funding() && spiPlane()) retireSpiPayload(path);
     OrphanCharge charged = orphanRemovals.remove(path);
     if (charged != null) release(charged.bytes(), charged.files());
     return charged != null;
+  }
+
+  /** Retire one operation's payload scope; an interrupted earlier removal reads as absence. */
+  private void retireSpiPayload(Path objectPath) throws IOException {
+    spiRetireScope(spiScope(objectPath));
   }
 
   private Path orphanPath(OrphanCandidate candidate) throws IOException {
@@ -1270,7 +1362,8 @@ final class InputStore implements AutoCloseable {
     Path target = objectPath(expected);
     if (inputInUse(context, header)) return false;
     if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-      Inspected retained = inspect(target, expected, true);
+      Inspected retained =
+          spiPlane() ? inspectSidecar(target, expected, true) : inspect(target, expected, true);
       Long charged = inputRemovals.putIfAbsent(target, retained.size());
       if (charged != null && charged.longValue() != retained.size())
         throw corrupt("pending input removal changed physical size");
@@ -1279,6 +1372,8 @@ final class InputStore implements AutoCloseable {
     }
     sync(root.resolve("objects"));
     reached(Phase.INPUT_RECLAIM_SYNCED);
+    // Sidecar first, payload second: a kill between leaves only a swept orphan payload.
+    if (spiPlane()) retireSpiPayload(target);
     Long charged = inputRemovals.remove(target);
     if (charged != null) release(charged, 1);
     return true;
@@ -1462,16 +1557,20 @@ final class InputStore implements AutoCloseable {
           ensureOpen();
           checkGeneration(envelope.context());
           Path target = objectPath(envelope);
-          try {
-            Files.createLink(target, path);
-            linked = true;
-            reached(Phase.LINKED);
-          } catch (FileAlreadyExistsException duplicate) {
-            inspect(target, envelope, true);
-            // An earlier attempt may have linked every byte but failed its directory force.
-            try (FileChannel retained =
-                FileChannel.open(target, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
-              retained.force(true);
+          if (spiPlane()) {
+            finishSpi(target);
+          } else {
+            try {
+              Files.createLink(target, path);
+              linked = true;
+              reached(Phase.LINKED);
+            } catch (FileAlreadyExistsException duplicate) {
+              inspect(target, envelope, true);
+              // An earlier attempt may have linked every byte but failed its directory force.
+              try (FileChannel retained =
+                  FileChannel.open(target, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                retained.force(true);
+              }
             }
           }
           sync(root.resolve("objects"));
@@ -1484,6 +1583,38 @@ final class InputStore implements AutoCloseable {
       } catch (IOException | RuntimeException failure) {
         abandon(failure);
         throw failure;
+      }
+    }
+
+    /**
+     * Install the validated payload on the SPI plane: the bounded payload is
+     * put once with its verified digest, then the identity sidecar is written.
+     * A kill between the put and the sidecar leaves a swept orphan payload.
+     */
+    private void finishSpi(Path target) throws IOException {
+      try {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+          // Duplicate FIN of an installed object: a full audit, then refund the
+          // whole reservation exactly like a failed link on the v2 plane (the
+          // first installation retains the single durable charge).
+          inspectSidecar(target, envelope, true);
+          try (FileChannel retained =
+              FileChannel.open(target, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            retained.force(true);
+          }
+          return;
+        }
+        byte[] payload = readStagingPayload(channel, envelope);
+        spi.put(
+            spiScope(target),
+            SPI_INPUT_ENTITY,
+            payload,
+            envelope.header().parameters().input().sha256().bytes());
+        linked = true;
+        reached(Phase.LINKED);
+        writeSidecar(target, envelope);
+      } catch (StorageException failure) {
+        throw spiFailure(failure);
       }
     }
 
@@ -1599,6 +1730,22 @@ final class InputStore implements AutoCloseable {
       synchronized (InputStore.this) {
         pin();
         inputReaders.merge(path, 1, Integer::sum);
+        if (spiPlane()) {
+          try {
+            InputStream payload = spi.openRead(spiScope(path), SPI_INPUT_ENTITY);
+            return new SpiReader(
+                payload,
+                length(),
+                path,
+                envelope.header().parameters().input().sha256().bytes());
+          } catch (StorageException failure) {
+            unpinInput(path);
+            throw spiFailure(failure);
+          } catch (RuntimeException | Error failure) {
+            unpinInput(path);
+            throw failure;
+          }
+        }
         FileChannel input = null;
         try {
           input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
@@ -1620,6 +1767,80 @@ final class InputStore implements AutoCloseable {
           throw failure;
         }
       }
+    }
+  }
+
+  /**
+   * Payload-only reader over the SPI backend. Unlike the v2 reader, which
+   * rehashes eagerly at open, verification completes at end of stream: the
+   * SPI plane verifies at put, and this reader proves the retained bytes
+   * still match on the way out.
+   */
+  private final class SpiReader extends InputStream {
+    private final InputStream input;
+    private final MessageDigest digest;
+    private final byte[] expected;
+    private final Path path;
+    private long remaining;
+    private boolean verified;
+    private boolean ended;
+
+    private SpiReader(InputStream input, long length, Path path, byte[] expected) {
+      this.input = input;
+      this.digest = Commitments.sha256();
+      this.expected = expected;
+      this.path = path;
+      this.remaining = length;
+    }
+
+    @Override
+    public int read() throws IOException {
+      byte[] one = new byte[1];
+      return read(one, 0, 1) == -1 ? -1 : Byte.toUnsignedInt(one[0]);
+    }
+
+    @Override
+    public synchronized int read(byte[] buffer, int offset, int length) throws IOException {
+      Objects.checkFromIndexSize(offset, length, buffer.length);
+      if (ended) throw new IOException("input reader is closed");
+      if (length == 0) return 0;
+      if (remaining == 0 && verified) return -1;
+      int limit = remaining > 0 ? (int) Math.min(length, remaining) : 1;
+      int count = input.read(buffer, offset, limit);
+      if (count < 0) {
+        if (remaining > 0) throw new EOFException("retained input shortened during read");
+        verify();
+        return -1;
+      }
+      if (remaining == 0) throw corrupt("retained input grew during read");
+      digest.update(buffer, offset, count);
+      remaining -= count;
+      if (remaining == 0) verify();
+      return count;
+    }
+
+    private void verify() throws IOException {
+      if (verified) return;
+      verified = true;
+      if (!MessageDigest.isEqual(digest.digest(), expected)) {
+        throw corrupt("retained input payload digest differs");
+      }
+    }
+
+    @Override
+    public synchronized void close() throws IOException {
+      if (ended) return;
+      IOException failure = null;
+      try {
+        input.close();
+      } catch (IOException close) {
+        failure = close;
+      }
+      synchronized (InputStore.this) {
+        unpinInput(path);
+      }
+      ended = true;
+      if (failure != null) throw failure;
     }
   }
 
@@ -1688,12 +1909,21 @@ final class InputStore implements AutoCloseable {
     if (retentionService != null) throw new IOException("V2 retention service still attached");
     closeRetirementScan();
     if (handles != 0) throw new IOException("V2 input store still has active handles");
+    StorageException spiClose = null;
+    if (spi != null) {
+      try {
+        spi.close();
+      } catch (StorageException failure) {
+        spiClose = failure;
+      }
+    }
     lock.release();
     lockChannel.close();
     closed = true;
     synchronized (OPEN_ROOTS) {
       OPEN_ROOTS.remove(root);
     }
+    if (spiClose != null) throw new IOException("SPI payload backend close failed", spiClose);
   }
 
   private void recover() throws IOException {
@@ -1739,6 +1969,19 @@ final class InputStore implements AutoCloseable {
             chargeRetained(funding.chargedBytes(), funding.chargedFiles());
             continue;
           }
+          if (object && spiPlane()) {
+            long fileSize = Files.size(path);
+            if (fileSize > add(METADATA_LIMIT, PREFIX + CHECKSUM + SPI_DIGEST)) {
+              throw corrupt("input sidecar exceeds local ceiling");
+            }
+            Inspected sidecar = inspectSidecar(path, null, true);
+            if (!objectPath(sidecar.envelope()).equals(path)) {
+              throw corrupt("input-store filename contradicts identity");
+            }
+            // Logical charge matches the v2 object's byte count, keeping quota accounting plane-neutral.
+            chargeRetained(sidecar.size(), 1);
+            continue;
+          }
           long size = Files.size(path);
           if (size > add(limits.objectBytes(), METADATA_LIMIT + PREFIX + CHECKSUM))
             throw corrupt("input-store file exceeds local ceiling");
@@ -1753,6 +1996,7 @@ final class InputStore implements AutoCloseable {
     }
     outputs.audit();
     reached(Phase.RECOVERY_AUDITED);
+    sweepOrphanSpiPayloads();
     // A complete policy may have survived a failed initial force; re-establish it before use.
     forceFile(root.resolve("policy.cbor"));
     sync(root);
@@ -1942,6 +2186,269 @@ final class InputStore implements AutoCloseable {
       return new Inspected(envelope, offset, size);
     } catch (ProtocolError failure) {
       throw corrupt("invalid retained input", failure);
+    }
+  }
+
+  // --- SPI object plane (adoption plan stages 3 and 4) ------------------
+
+  /**
+   * One scope per stored payload, namespaced to this installation: component 0
+   * is the installation tag (the first four bytes of the store identity) and
+   * components 1-7 come from the first 56 lowercase hex characters of the
+   * object's name (input {@code <hex64>.input}, output {@code
+   * <hex64>-<index>.output}), entity {@link #SPI_INPUT_ENTITY} holding the
+   * payload bytes. The tag keeps installations that share one service
+   * database out of each other's namespace, and bounds the path to the
+   * 8-component layout maximum.
+   */
+  private ScopePath spiScope(Path namedPath) throws IOException {
+    String name = namedPath.getFileName().toString();
+    if (name.length() < 56 || !name.substring(0, 56).matches("[0-9a-f]{56}")) {
+      throw corrupt("SPI scope derivation needs a 56-hex name prefix");
+    }
+    String hex = name.substring(0, 56);
+    long[] components = new long[8];
+    components[0] = spiTag();
+    for (int i = 1; i < components.length; i++) {
+      components[i] = Long.parseUnsignedLong(hex.substring((i - 1) * 8, (i - 1) * 8 + 8), 16);
+    }
+    return ScopePath.of(components);
+  }
+
+  /**
+   * The installation tag: the first four bytes of this store's identity as an
+   * unsigned 32-bit scope component, mirroring the Rust lane's plane tag so
+   * both lanes namespace a shared service database the same way.
+   */
+  private long spiTag() {
+    return Integer.toUnsignedLong((int) (identity.getMostSignificantBits() >>> 32));
+  }
+
+  /** Whether this installation routes payload bytes through the SPI object plane. */
+  boolean spiPlane() {
+    return spi != null;
+  }
+
+  /** Derives the payload scope for one named object; see {@link #spiScope(Path)}. */
+  ScopePath spiScopeFor(Path namedPath) throws IOException {
+    return spiScope(namedPath);
+  }
+
+  /** Puts one bounded payload durably; entity 0 of the derived scope. */
+  void spiPutPayload(ScopePath scope, byte[] payload, byte[] digest) throws IOException {
+    try {
+      spi.put(scope, SPI_INPUT_ENTITY, payload, digest);
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Opens one payload stream; the caller verifies bytes against its recorded digest. */
+  InputStream spiOpenPayload(ScopePath scope) throws IOException {
+    try {
+      return spi.openRead(scope, SPI_INPUT_ENTITY);
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Retires one payload scope; an interrupted earlier removal reads as absence. */
+  void spiRetireScope(ScopePath scope) throws IOException {
+    try {
+      spi.retire(scope, Long.MAX_VALUE);
+    } catch (StorageException failure) {
+      if (failure.kind() == StorageException.Kind.NOT_FOUND) return;
+      throw spiFailure(failure);
+    }
+  }
+
+  /** Full payload audit: rehash the retained bytes against the recorded digest. */
+  void spiVerifyPayload(ScopePath scope, byte[] expectedDigest) throws IOException {
+    try (InputStream payload = spiOpenPayload(scope)) {
+      MessageDigest digest = Commitments.sha256();
+      byte[] block = new byte[BLOCK];
+      while (true) {
+        int read = payload.read(block);
+        if (read < 0) break;
+        digest.update(block, 0, read);
+      }
+      if (!MessageDigest.isEqual(digest.digest(), expectedDigest)) {
+        throw corrupt("retained payload digest differs");
+      }
+    }
+  }
+
+  private static IOException spiFailure(StorageException failure) {
+    return switch (failure.kind()) {
+      case NOT_FOUND -> new java.io.FileNotFoundException(failure.getMessage());
+      case CORRUPT -> corrupt(failure.getMessage());
+      case TRANSIENT -> new IOException("SPI payload backend failure (transient)", failure);
+      default -> new IOException("SPI payload backend failure", failure);
+    };
+  }
+
+  /**
+   * Sidecar image preserving the identity audit: SPI magic, metadata length,
+   * the same metadata CBOR as the v2 object, its checksum, and the recorded
+   * payload digest. The payload bytes themselves live in the SPI backend.
+   */
+  private static byte[] sidecarBytes(Envelope envelope) {
+    byte[] metadata = metadata(envelope);
+    byte[] image = new byte[PREFIX + metadata.length + CHECKSUM + SPI_DIGEST];
+    ByteBuffer.wrap(image)
+        .put(SPI_MAGIC)
+        .putInt(metadata.length)
+        .put(metadata)
+        .put(Commitments.sha256().digest(metadata))
+        .put(envelope.header().parameters().input().sha256().bytes());
+    return image;
+  }
+
+  /**
+   * Parse and verify one sidecar like {@link #inspect(FileChannel, Envelope,
+   * boolean)} verifies a v2 object, with payload verification delegated to
+   * the backend when {@code verifyPayload} is set. The returned {@link
+   * Inspected#size()} is the logical charge (sidecar plus payload, excluding
+   * the digest field), identical to the v2 object's charged size.
+   */
+  private Inspected inspectSidecar(Path path, Envelope expected, boolean verifyPayload)
+      throws IOException {
+    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+      throw corrupt("input sidecar is not a regular file");
+    }
+    try (FileChannel input = FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+      try {
+        ByteBuffer prefix = ByteBuffer.allocate(PREFIX);
+        readAll(input, prefix);
+        prefix.flip();
+        byte[] magic = new byte[8];
+        prefix.get(magic);
+        int count = prefix.getInt();
+        if (!Arrays.equals(magic, SPI_MAGIC) || count < 1 || count > METADATA_LIMIT) {
+          throw corrupt("invalid input sidecar header");
+        }
+        byte[] encoded = new byte[count];
+        readAll(input, ByteBuffer.wrap(encoded));
+        byte[] checksum = new byte[CHECKSUM];
+        readAll(input, ByteBuffer.wrap(checksum));
+        if (!MessageDigest.isEqual(checksum, Commitments.sha256().digest(encoded))) {
+          throw corrupt("input sidecar metadata checksum differs");
+        }
+        Cbor.Reader in = new Cbor.Reader(encoded, METADATA_LIMIT);
+        in.exact(5);
+        ByteBuffer storeId = ByteBuffer.wrap(in.bytes(16));
+        UUID store = new UUID(storeId.getLong(), storeId.getLong());
+        Commitments.Context context = new Commitments.Context(in.text(128), in.text(128), in.number());
+        InputHeader header = RecordCodec.inputHeader(in);
+        in.end();
+        Envelope envelope = new Envelope(store, context, header);
+        if (!store.equals(identity)
+            || context.generation() != header.generation()
+            || (expected != null && !envelope.equals(expected))
+            || !Arrays.equals(encoded, metadata(envelope))) {
+          throw corrupt("input sidecar identity differs");
+        }
+        Wire.encodeRecord(header, Wire.HEADER_LIMIT);
+        Input descriptor = header.parameters().input();
+        long headerSize = add(PREFIX + CHECKSUM + (long) count, SPI_DIGEST);
+        if (input.size() != headerSize) throw corrupt("input sidecar length differs");
+        if (descriptor.length() > limits.objectBytes()) throw corrupt("input object length differs");
+        byte[] recorded = new byte[SPI_DIGEST];
+        readAll(input, ByteBuffer.wrap(recorded));
+        if (!MessageDigest.isEqual(recorded, descriptor.sha256().bytes())) {
+          throw corrupt("input sidecar payload digest differs");
+        }
+        if (verifyPayload) verifySpiPayload(envelope, recorded);
+        return new Inspected(envelope, headerSize, add(headerSize - SPI_DIGEST, descriptor.length()));
+      } catch (ProtocolError failure) {
+        throw corrupt("invalid retained input sidecar", failure);
+      }
+    }
+  }
+
+  /** Full payload audit through the backend: rehash the retained bytes against the recorded digest. */
+  private void verifySpiPayload(Envelope envelope, byte[] expectedDigest) throws IOException {
+    spiVerifyPayload(spiScope(objectPath(envelope)), expectedDigest);
+  }
+
+  /**
+   * Read the staged payload for one bounded copy into the SPI put. The
+   * receiver's verifier has already proven the bytes match the declared
+   * digest; the payload is bounded by {@code limits.objectBytes()}.
+   */
+  private byte[] readStagingPayload(FileChannel staging, Envelope envelope) throws IOException {
+    Input descriptor = envelope.header().parameters().input();
+    if (descriptor.length() > Integer.MAX_VALUE) {
+      throw ProtocolError.limit("input exceeds local object ceiling");
+    }
+    byte[] metadata = metadata(envelope);
+    long offset = PREFIX + CHECKSUM + (long) metadata.length;
+    if (staging.size() != add(offset, descriptor.length())) {
+      throw corrupt("input staging length differs");
+    }
+    staging.position(offset);
+    byte[] payload = new byte[(int) descriptor.length()];
+    readAll(staging, ByteBuffer.wrap(payload));
+    return payload;
+  }
+
+  /**
+   * Write one sidecar durably. Reached after the payload is durable in the
+   * backend, so a kill before this call leaves only a swept orphan payload.
+   */
+  private void writeSidecar(Path target, Envelope envelope) throws IOException {
+    try (FileChannel output = create(target)) {
+      writeAll(output, ByteBuffer.wrap(sidecarBytes(envelope)));
+      output.force(true);
+    }
+    reached(Phase.LINKED);
+  }
+
+  /**
+   * Recovery sweep for payloads orphaned without their sidecar (a kill
+   * between the backend put and the sidecar write). Enumerates scopes
+   * through {@link ObjectStore#listScopes()}, so it works on every SPI
+   * backend; a scope of this installation's tagged shape holding entities
+   * whose derived name has neither an input sidecar nor an output sidecar is
+   * retired whole. Scopes outside this installation's tag belong to a
+   * sibling sharing the service database and are left alone, never an
+   * error; seal-only scopes hold no payload bytes and are left alone too.
+   */
+  private void sweepOrphanSpiPayloads() throws IOException {
+    if (spi == null) return;
+    List<ScopePath> scopes;
+    try {
+      scopes = spi.listScopes();
+    } catch (StorageException failure) {
+      throw spiFailure(failure);
+    }
+    long tag = spiTag();
+    for (ScopePath scope : scopes) {
+      List<Long> components = scope.components();
+      if (components.size() != 8 || components.get(0) != tag) continue;
+      List<Long> entities;
+      try {
+        entities = spi.list(scope);
+      } catch (StorageException failure) {
+        throw spiFailure(failure);
+      }
+      if (entities.isEmpty()) continue;
+      long[] nameComponents = new long[7];
+      for (int i = 0; i < nameComponents.length; i++) nameComponents[i] = components.get(i + 1);
+      // The scope carries the name's first 56 hex characters; the dropped
+      // trailing component is matched with a glob, mirroring the Rust lane's
+      // prefix-based stub check.
+      String hex = ScopePath.of(nameComponents).render().replace("/", "");
+      boolean referenced;
+      try (var entries = Files.newDirectoryStream(root.resolve("objects"), hex + "*.input")) {
+        referenced = entries.iterator().hasNext();
+      }
+      if (!referenced) {
+        try (var entries = Files.newDirectoryStream(root.resolve("outputs"), hex + "*-*.output")) {
+          referenced = entries.iterator().hasNext();
+        }
+      }
+      if (!referenced) spiRetireScope(scope);
     }
   }
 

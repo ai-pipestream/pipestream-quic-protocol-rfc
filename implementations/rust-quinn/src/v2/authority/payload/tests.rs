@@ -237,7 +237,7 @@ fn corrupt_retained_bytes_are_unavailable_not_verified() {
     let key = installed.key().to_owned();
     drop(installed);
     let path = fixture.store.root.path(&key, false);
-    let (_, offset) = read_header(&path, false).unwrap();
+    let (_, offset) = read_header(&path, false, false).unwrap();
     let mut file = OpenOptions::new().write(true).open(path).unwrap();
     file.seek(SeekFrom::Start(offset)).unwrap();
     file.write_all(b"xyz").unwrap();

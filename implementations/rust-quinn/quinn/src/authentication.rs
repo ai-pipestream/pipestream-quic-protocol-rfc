@@ -71,7 +71,7 @@ impl AuthenticationPolicy {
                 bail!("principal fingerprint must contain 64 hexadecimal digits");
             }
             let mut hash = [0; 32];
-            for (index, pair) in fingerprint.as_bytes().chunks_exact(2).enumerate() {
+            for (index, pair) in fingerprint.as_bytes().as_chunks::<2>().0.iter().enumerate() {
                 hash[index] = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
             }
             if principals.insert(hash, principal.to_owned()).is_some() {

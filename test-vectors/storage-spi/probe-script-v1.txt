@@ -1,0 +1,16 @@
+# Probe script v1 — deterministic workload exercising every SPI semantic.
+# Covers: root + nested scopes, five bucket-vector entity ids, seal, retire,
+# interleaved journal intents/commits (commit cursor ordering), replay.
+put 00000000 0 00ff
+put 00000000 1 10
+put 00000000 255 deadbeef
+put 00000000/00000008 16909060 00
+put 00000000/00000008 2309737967 feed
+append intent-alpha aaaa
+put 00000000/00000008 2 22
+append intent-beta bbbb
+commit intent-alpha cc
+seal 00000000/00000008 3
+put 00000000 4096 40
+commit intent-beta dd
+retire 00000000 255

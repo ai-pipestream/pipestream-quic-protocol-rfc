@@ -63,12 +63,12 @@ pub enum Command {
     /// Explicitly initialize new authority history and its paired object root.
     InitAuthority {
         #[command(flatten)]
-        storage: configuration::Storage,
+        storage: Box<configuration::Storage>,
     },
     /// Open existing history. Missing or incompatible state is an error.
     Serve {
         #[command(flatten)]
-        storage: configuration::Storage,
+        storage: Box<configuration::Storage>,
         #[arg(long, default_value = "127.0.0.1:0")]
         bind: SocketAddr,
         #[arg(long)]
@@ -118,7 +118,7 @@ pub enum Command {
     /// Operator action against existing history. Does not create a session.
     Revoke {
         #[command(flatten)]
-        storage: configuration::Storage,
+        storage: Box<configuration::Storage>,
         #[arg(long)]
         owner: String,
         #[arg(long)]
@@ -263,7 +263,7 @@ pub async fn run(command: Command) -> Result<()> {
             fixture_schedule,
         } => {
             server::serve(
-                storage,
+                *storage,
                 server::Network {
                     bind,
                     cert,

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = [".", "conformance", "quinn", "server"]
-default-members = [".", "conformance", "quinn", "server"]
+members = [".", "conformance", "quinn", "server", "storage"]
+default-members = [".", "conformance", "quinn", "server", "storage"]
 
 [package]
 name = "pipestream-core"
@@ -21,6 +21,7 @@ rand = "0.10.2"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "blob"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
+pipestream-storage = { path = "storage" }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["fs"] }

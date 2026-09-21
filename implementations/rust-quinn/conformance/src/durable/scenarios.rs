@@ -265,6 +265,11 @@ pub struct ScenarioContext {
     pub seed: u64,
     pub rust_bin: PathBuf,
     pub java_jar: Option<PathBuf>,
+    /// Driver-level storage selection (plane, backend, resolved non-secret
+    /// coordinates) for every row's subjects; the fixtures take it from
+    /// here so no row can start a subject on a different selection than
+    /// the run recorded.
+    pub storage: crate::durable::process::StorageSelection,
 }
 
 impl ScenarioContext {
@@ -557,7 +562,9 @@ fn setup_session_serve_args(
         certs,
         server,
         client,
+        context.run_id.clone(),
     )?
+    .with_storage(context.storage.clone())
     .with_extra_serve_args(serve_args);
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
@@ -643,7 +650,9 @@ fn setup_session_policy(
         certs,
         server,
         client,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -679,10 +688,46 @@ fn enforce_no_fault_schedule(context: &ScenarioContext, id: &str) -> Result<()> 
     })
 }
 
+/// A declare whose client op refused (non-zero exit): carries the captured
+/// attempt output so a row can use THIS attempt's transcript as the refusal
+/// evidence. Re-executing an identical declare is not equivalent — the
+/// funding-cap refusal is nondeterministic by subject design (the Java
+/// authority's WAL-ceiling trip is checkpoint-timing dependent at the
+/// capacity boundary): attempt 1 can refuse with LIMIT_EXCEEDED while an
+/// identical re-run commits.
+#[derive(Debug)]
+pub struct DeclareRefused {
+    output: Output,
+}
+
+impl DeclareRefused {
+    /// The captured attempt transcript (`exit=/stdout:/stderr:` text), the
+    /// same rendering [`expect_declare_failure`] writes for a re-run.
+    fn transcript(&self) -> String {
+        transcript(&self.output)
+    }
+}
+
+impl std::fmt::Display for DeclareRefused {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "declare operation failed ({})\n{}",
+            self.output.status,
+            self.transcript()
+        )
+    }
+}
+
+impl std::error::Error for DeclareRefused {}
+
 /// One declare batch. An empty `entities` slice drives the CLI with no
 /// `--entities` flag at all: that is the only way both subjects can express
 /// an empty batch (sealed or not). `--seal` finalizes the scope membership.
-/// Returns the operation id and the validated receipt text.
+/// Returns the operation id and the validated receipt text. A refused op
+/// fails as [`DeclareRefused`] carrying the attempt's output, so callers
+/// matching on the error can reuse that attempt's evidence instead of
+/// re-executing the operation.
 fn declare_batch(
     session: &Session,
     events: &mut EventWriter,
@@ -735,7 +780,20 @@ fn declare_scoped_batch(
         operation.push("--seal");
     }
     let declared = session.op(&operation)?;
-    let receipt = require(&declared, "RECEIPT", "declare operation")?;
+    // A non-zero exit is the op's refusal: capture THIS attempt's output
+    // (see [`DeclareRefused`]) instead of flattening it into a message-only
+    // error. A zero exit without the receipt marker is a protocol
+    // violation, not a refusal, and stays a hard row failure.
+    if !declared.status.success() {
+        return Err(DeclareRefused { output: declared }.into());
+    }
+    let receipt = String::from_utf8_lossy(&declared.stdout).into_owned();
+    ensure!(
+        receipt.contains("RECEIPT"),
+        "declare operation failed ({})\n{}",
+        declared.status,
+        transcript(&declared)
+    );
     events.append(
         "RECEIPT_VALIDATED",
         Some(hex_to_id(&declare)?),
@@ -2583,29 +2641,24 @@ fn g1_declaration_capacity_direction(
                 next += 50;
             }
             Err(err) => {
-                // Refusals surface as clap/journal errors from the client; the
-                // refusal evidence is the failed declare's stderr transcript.
+                // The refusal evidence is THIS attempt's captured output.
+                // Re-executing the identical declare is not equivalent: the
+                // funding refusal is nondeterministic at the capacity
+                // boundary (a WAL-ceiling trip is checkpoint-timing
+                // dependent), so attempt 1 can refuse while an identical
+                // re-run commits — the re-run FAILed this row with the
+                // subject inside contract. Anything that is not a captured
+                // refusal is a structural failure and propagates.
+                let Some(refusal) = err.downcast_ref::<DeclareRefused>() else {
+                    return Err(err);
+                };
                 let bad = oracle::operation_hex(oracle::operation_id(context.seed, &tag, 0));
-                events.append(
-                    "REQUEST_SENT",
-                    Some(hex_to_id(&bad)?),
-                    None,
-                    None,
-                    None,
-                    None,
-                )?;
-                let (_output, text) = expect_declare_failure(
-                    &session,
-                    &artifacts,
-                    "declare-funding-refusal.txt",
-                    &[
-                        "declare",
-                        "--operation",
-                        &bad,
-                        "--entities",
-                        &ids.iter().map(u64::to_string).collect::<Vec<_>>().join(","),
-                    ],
-                )?;
+                let text = refusal.transcript();
+                fs::write(artifacts.join("declare-funding-refusal.txt"), &text)?;
+                ensure!(
+                    !refusal.output.status.success(),
+                    "declare-funding-refusal was expected to refuse but exited zero\n{text}"
+                );
                 let named = refusal_named_line(&text, &["LIMIT_EXCEEDED"]);
                 ensure!(
                     named.is_some(),
@@ -2620,7 +2673,6 @@ fn g1_declaration_capacity_direction(
                     ids.len(),
                     declared_ids.len()
                 ));
-                let _ = err;
                 break;
             }
         }
@@ -4293,7 +4345,9 @@ fn setup_armed(
         certs,
         server,
         client,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let events = scenario_dir.join("events.tsv");
     let server = fixture.start_server_armed(arming.as_ref(), probe)?;
@@ -12102,7 +12156,9 @@ fn g5_fixture(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     Ok((fixture, server))
@@ -15988,7 +16044,9 @@ fn setup_raw_probe(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let sequence = fixture.next_sequence(&server, "alice")?;
@@ -17601,7 +17659,9 @@ fn r_connection_ceiling_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -18135,7 +18195,9 @@ fn r_stalled_principal_progress_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -19083,7 +19145,9 @@ fn r_memory_ladder_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     let sequence = fixture.next_sequence(&owned, "alice")?;
@@ -20063,7 +20127,9 @@ fn r_staging_and_journal_bounds_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let mut owned = fixture.start_server()?;
     ensure!(
@@ -21306,7 +21372,9 @@ fn r_network_bytes_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     ensure!(
@@ -21747,7 +21815,9 @@ fn r_native_credit_direction(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let owned = fixture.start_server()?;
     ensure!(
@@ -23255,7 +23325,9 @@ fn g5_cross_authority_reference_direction(
         fixture_x.certs.with_principal_map(&y_map),
         server_subject,
         Subject::Rust,
+        context.run_id.clone(),
     )?
+    .with_storage(context.storage.clone())
     .with_authority(AUTHORITY_Y);
     fixture_y.run_init_authority()?;
     let server_y = fixture_y.start_server()?;
@@ -23499,7 +23571,9 @@ fn g5_expired_identity_direction(
         certs,
         server_subject,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let server = fixture.start_server()?;
     let short_identity = fixture.certs.principal("alice")?.clone();
@@ -24652,7 +24726,9 @@ fn subject_schedule_refusal(
         certs,
         server,
         Subject::Rust,
-    )?;
+        context.run_id.clone(),
+    )?
+    .with_storage(context.storage.clone());
     fixture.run_init_authority()?;
     let schedule_path = direction_dir.join("schedule.tsv");
     fs::write(&schedule_path, schedule::render(rows)?)?;
@@ -25101,6 +25177,7 @@ mod tests {
             seed: 7,
             rust_bin: PathBuf::from("/nonexistent/pipestream-quinn"),
             java_jar: None,
+            storage: crate::durable::process::StorageSelection::default(),
         };
         // The Java FixtureMain consumes one pause row per reached boundary,
         // so attempt 1 takes the first pause and attempt 2 the second; the
@@ -25252,5 +25329,53 @@ mod tests {
             5
         );
         assert!(parse_state("WORK revision=3").is_err());
+    }
+
+    /// g1-declaration-capacity's funding loop must use the refusing
+    /// attempt's OWN captured output as evidence: the funding refusal is
+    /// nondeterministic at the capacity boundary (a WAL-ceiling trip is
+    /// checkpoint-timing dependent), so attempt 1 can refuse with
+    /// LIMIT_EXCEEDED while an identical re-run commits. The carrier type
+    /// is what makes that possible — its transcript renders exactly like
+    /// the re-run evidence the row used to capture, and it round-trips
+    /// through anyhow so the loop's Err arm can recover it by downcast.
+    #[test]
+    fn declare_refused_carries_its_own_attempt_transcript() {
+        use std::os::unix::process::ExitStatusExt;
+
+        // wait(2) encoding: an exit code 1 status is 1 << 8 (raw 1 would be
+        // signal 1 / SIGHUP).
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: b"RECEIPT would-be-receipt".to_vec(),
+            stderr: b"authority refusal LIMIT_EXCEEDED: record completion capacity exhausted"
+                .to_vec(),
+        };
+        let error = anyhow::Error::from(DeclareRefused { output });
+        // Structural errors must not be mistaken for a captured refusal.
+        assert!(error.downcast_ref::<DeclareRefused>().is_some());
+        assert!(
+            anyhow::anyhow!("events append failed")
+                .downcast_ref::<DeclareRefused>()
+                .is_none()
+        );
+        let refusal = error.downcast_ref::<DeclareRefused>().unwrap();
+        let text = refusal.transcript();
+        assert_eq!(
+            text,
+            "exit=exit status: 1\nstdout:\nRECEIPT would-be-receipt\nstderr:\nauthority refusal \
+             LIMIT_EXCEEDED: record completion capacity exhausted"
+        );
+        // The Display carries the same evidence for `?` propagation.
+        let displayed = format!("{error}");
+        assert!(
+            displayed.contains("declare operation failed (exit status: 1)"),
+            "{displayed}"
+        );
+        assert!(displayed.contains("LIMIT_EXCEEDED"), "{displayed}");
+        // The refusal the funding loop asserts on is a failed exit by
+        // construction (a zero exit without a receipt is a hard failure,
+        // never a DeclareRefused).
+        assert!(!refusal.output.status.success());
     }
 }

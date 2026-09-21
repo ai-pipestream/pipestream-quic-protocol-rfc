@@ -405,7 +405,9 @@ final class DurableLifecycleTest {
             defaults.results(),
             defaults.waits(),
             new DurableHost.WorkerLimits(1, 3, 3),
-            defaults.producer());
+            defaults.producer(),
+            DurableHost.ObjectPlane.V2,
+            DurableHost.SpiObjectBackend.fs());
     DurableHost.OwnerPolicy owners = DurableHost.OwnerPolicy.fromPrincipals(() -> principals, true);
     try (DurableHost host =
             DurableHost.initialize(

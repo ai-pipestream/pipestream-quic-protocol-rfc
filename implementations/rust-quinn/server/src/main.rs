@@ -324,7 +324,7 @@ fn decode_checksum(value: &str) -> Result<[u8; 32]> {
         anyhow::bail!("state checksum must contain 64 hexadecimal characters");
     }
     let mut output = [0; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let text = std::str::from_utf8(chunk)?;
         output[index] = u8::from_str_radix(text, 16)?;
     }

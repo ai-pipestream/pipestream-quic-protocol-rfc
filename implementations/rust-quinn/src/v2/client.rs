@@ -13,6 +13,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 use sha2::{Digest as _, Sha256};
 use std::{path::Path, sync::Arc, time::Duration as Elapsed};
 
+pub mod bridge;
 mod observations;
 pub mod results;
 mod storage;

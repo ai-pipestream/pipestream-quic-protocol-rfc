@@ -40,9 +40,20 @@ public final class V2Main {
       System.err.println(
           failure instanceof ProtocolError error
               ? error.code() + ": " + error.getMessage()
-              : failure.getMessage() == null ? failure.toString() : failure.getMessage());
+              : causeChain(failure));
       System.exit(1);
     }
+  }
+
+  /** One line per failure in the causal chain, so a wrapped backend failure names its root. */
+  private static String causeChain(Throwable failure) {
+    StringBuilder out = new StringBuilder();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (out.length() > 0) out.append(" caused by: ");
+      String message = cause.getMessage();
+      out.append(message == null ? cause.toString() : cause.getClass().getSimpleName() + ": " + message);
+    }
+    return out.toString();
   }
 
   /**
@@ -80,7 +91,15 @@ public final class V2Main {
     DurableHost.Configuration defaults =
         DurableHost.Configuration.defaults(
             required(options, "authority"), required(options, "result-authority"));
-    if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) return defaults;
+    DurableHost.ObjectPlane objectPlane =
+        DurableHost.ObjectPlane.parse(
+            options.getOrDefault("object-plane", DurableHost.ObjectPlane.V2.wire()));
+    DurableHost.SpiObjectBackend spiBackend = spiBackend(options);
+    if (!options.containsKey("db-mib") && !options.containsKey("wal-mib")) {
+      return objectPlane == DurableHost.ObjectPlane.V2 && spiBackend.kind().equals("fs")
+          ? defaults
+          : new DurableHost.Configuration(defaults, objectPlane, spiBackend);
+    }
     BoundedSqlite.Limits files = defaults.files();
     long walBytes = mebibytes(options, "wal-mib", files.walBytes());
     // The log is only usable as far as its shared-memory index reaches: scale the sidecar with
@@ -110,7 +129,60 @@ public final class V2Main {
         defaults.results(),
         defaults.waits(),
         defaults.storageWorkers(),
-        defaults.producer());
+        defaults.producer(),
+        objectPlane,
+        spiBackend);
+  }
+
+  /**
+   * SPI object backend selection from flags: {@code --spi-backend fs|postgres|s3|mongo}
+   * (default fs) with {@code --spi-pg-url}, {@code --spi-s3-endpoint},
+   * {@code --spi-s3-bucket}, {@code --spi-mongo-uri} and {@code --spi-mongo-database}
+   * carrying the persisted non-secret coordinates. A non-fs selection requires
+   * {@code --object-plane spi}.
+   */
+  static DurableHost.SpiObjectBackend spiBackend(Map<String, String> options) {
+    String kind = options.getOrDefault("spi-backend", "fs");
+    DurableHost.SpiObjectBackend backend =
+        switch (kind) {
+          case "fs" -> DurableHost.SpiObjectBackend.fs();
+          case "postgres" -> new DurableHost.SpiObjectBackend(kind, options.get("spi-pg-url"), null);
+          case "s3" ->
+              new DurableHost.SpiObjectBackend(
+                  kind, options.get("spi-s3-endpoint"), options.get("spi-s3-bucket"));
+          case "mongo" ->
+              new DurableHost.SpiObjectBackend(
+                  kind, options.get("spi-mongo-uri"), options.get("spi-mongo-database"));
+          default -> throw new IllegalArgumentException("unknown --spi-backend: " + kind);
+        };
+    if (!backend.kind().equals("fs")
+        && !DurableHost.ObjectPlane.SPI.wire().equals(options.get("object-plane"))) {
+      throw new IllegalArgumentException("an SPI backend selection requires --object-plane spi");
+    }
+    return backend;
+  }
+
+  /**
+   * SPI credential environment for {@link DurableHost} opens: each {@code PROBE_*}
+   * variable comes from the matching {@code --spi-*} flag when present, else from
+   * the process environment.
+   */
+  static Map<String, String> spiEnvironment(Map<String, String> options) {
+    Map<String, String> environment = new java.util.HashMap<>();
+    String[][] names = {
+      {"PROBE_PG_USER", "spi-pg-user"},
+      {"PROBE_PG_PASSWORD", "spi-pg-password"},
+      {"PROBE_S3_ACCESS_KEY", "spi-s3-access-key"},
+      {"PROBE_S3_SECRET_KEY", "spi-s3-secret-key"},
+      {"PROBE_S3_REGION", "spi-s3-region"},
+      {"PROBE_S3_PREFIX", "spi-s3-prefix"}
+    };
+    for (String[] name : names) {
+      String value = options.get(name[1]);
+      if (value == null || value.isBlank()) value = System.getenv(name[0]);
+      if (value != null && !value.isBlank()) environment.put(name[0], value);
+    }
+    return environment;
   }
 
   /**
@@ -151,7 +223,8 @@ public final class V2Main {
             configuration(options),
             ReferenceApplications.all(),
             DurableHost.OwnerPolicy.fromPrincipals(Map::of, false),
-            DurableHost.UtcClock.system(options.containsKey("trust-system-clock")));
+            DurableHost.UtcClock.system(options.containsKey("trust-system-clock")),
+            spiEnvironment(options));
     host.close();
     System.out.println("INITIALIZED " + root.toAbsolutePath());
   }
@@ -204,7 +277,8 @@ public final class V2Main {
             ReferenceApplications.all(),
             DurableHost.OwnerPolicy.fromPrincipals(
                 () -> principals, options.containsKey("allow-skip")),
-            DurableHost.UtcClock.system(true));
+            DurableHost.UtcClock.system(true),
+            spiEnvironment(options));
     if (boundaries != null) host.boundaries(boundaries);
     DurableServer server;
     try {
@@ -361,12 +435,21 @@ public final class V2Main {
     List<String> lines = new ArrayList<>();
     lines.add("PipeStream V2 durable endpoints (Java/Netty)");
     lines.add("  init-authority --root DIR --authority LABEL --result-authority HOST:PORT");
-    lines.add("        [--db-mib MIB] [--wal-mib MIB]");
+    lines.add(
+        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]"
+            + " [--spi-backend fs|postgres|s3|mongo]");
     lines.add("  serve --root DIR --authority LABEL --result-authority HOST:PORT --bind HOST:PORT");
     lines.add(
         "        --cert PEM --key PEM --client-ca PEM --principal-map TSV --trust-system-clock");
     lines.add("        [--allow-skip] [--ready-file PATH] [--object-limit BYTES]");
-    lines.add("        [--db-mib MIB] [--wal-mib MIB]  (must repeat the init-authority values)");
+    lines.add(
+        "        [--db-mib MIB] [--wal-mib MIB] [--object-plane v2|spi]"
+            + " [--spi-backend fs|postgres|s3|mongo]"
+            + " [--spi-pg-url jdbc:postgresql://HOST:PORT/DB|postgres://[USER[:PASS]@]HOST:PORT/DB]"
+            + " [--spi-s3-endpoint URI] [--spi-s3-bucket NAME] [--spi-s3-access-key KEY]"
+            + " [--spi-s3-secret-key KEY] [--spi-s3-region REGION] [--spi-mongo-uri URI]"
+            + " [--spi-mongo-database NAME]  ([--spi-s3-region] defaults to us-east-1)"
+            + "  (must repeat the init-authority values)");
     lines.addAll(ClientCommands.usage());
     lines.add("Legacy version-1 commands remain in ai.pipestream.quic.Main.");
     for (String line : lines) System.out.println(line);
