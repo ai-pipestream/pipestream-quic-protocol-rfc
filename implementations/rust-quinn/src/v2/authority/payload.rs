@@ -533,9 +533,13 @@ fn sweep_spi_orphans(root: &mut Root) -> Result<()> {
             .map_err(|_| StoreError::Corrupt("payload inventory poisoned"))?;
         entries.keys().map(|key| key[..8].to_owned()).collect()
     };
+    let tag = plane_tag(root.binding);
     for scope in plane.list_scopes().map_err(spi)? {
-        if scope.depth() != 1 || scope.components()[0] != 0 {
-            return Err(StoreError::Corrupt("unexpected SPI plane scope"));
+        // Only this installation's plane scopes (depth 1: [tag, prefix]);
+        // anything else (another installation's objects, another lane's
+        // plane, anything foreign) is left alone — never an error.
+        if scope.depth() != 1 || scope.components()[0] != tag {
+            continue;
         }
         let prefix = format!("{:08x}", scope.scope_id());
         if !stub_prefixes.contains(&prefix) {
@@ -549,15 +553,21 @@ fn sweep_spi_orphans(root: &mut Root) -> Result<()> {
     Ok(())
 }
 
-/// The SPI plane scope of one payload object: `root(0)/<key prefix>`. Each
-/// object gets its own child scope holding entity 0, so orphan sweeps and
-/// collection can point-retire one object: the SPI's cursor-based `retire`
-/// has no per-entity delete, and a shared scope would delete every object
-/// below the orphan's id.
-fn plane_scope(key: &str) -> pipestream_storage::ScopePath {
-    pipestream_storage::ScopePath::root(0)
+/// The SPI plane scope of one payload object:
+/// `root(<installation tag>)/<key prefix>`. The installation tag is the
+/// first four bytes of the store binding, so installations sharing one
+/// service database (concurrent certification rows, both lanes on one
+/// `probe` database) never see each other's objects — crucially the orphan
+/// sweep only retires its own installation's entities.
+fn plane_scope(binding: StoreIdentity, key: &str) -> pipestream_storage::ScopePath {
+    pipestream_storage::ScopePath::root(plane_tag(binding))
         .child(plane_entity(key))
         .expect("plane scope is depth 1")
+}
+
+/// The first four bytes of the store binding, as the plane root scope.
+fn plane_tag(binding: StoreIdentity) -> u32 {
+    u32::from_be_bytes(binding.as_bytes()[..4].try_into().expect("16-byte identity"))
 }
 
 /// The SPI plane entity of an object is always 0; the payload key's first 8
@@ -1031,7 +1041,7 @@ impl PayloadStore {
                 let taken = !plane
                     .lock()
                     .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-                    .list(&plane_scope(&key))
+                    .list(&plane_scope(self.root.binding, &key))
                     .map_err(spi)?
                     .is_empty();
                 if taken {
@@ -1063,7 +1073,7 @@ impl PayloadStore {
         let mut writer = plane
             .lock()
             .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-            .begin_put(&plane_scope(key), &expected.0)
+            .begin_put(&plane_scope(self.root.binding, key), &expected.0)
             .map_err(spi)?;
         let mut chunk = [0u8; 64 * 1024];
         loop {
@@ -1087,7 +1097,7 @@ impl PayloadStore {
         let Some(plane) = &self.root.spi else {
             return Ok(());
         };
-        let scope = plane_scope(key);
+        let scope = plane_scope(self.root.binding, key);
         match plane
             .lock()
             .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
@@ -1148,7 +1158,7 @@ impl PayloadStore {
             let reader = plane
                 .lock()
                 .map_err(|_| StoreError::Corrupt("payload SPI plane poisoned"))?
-                .open_read(&plane_scope(key))
+                .open_read(&plane_scope(self.root.binding, key))
                 .map_err(|_| {
                     protocol(ErrorCode::OutputUnavailable, "retained object absent")
                 })?;
