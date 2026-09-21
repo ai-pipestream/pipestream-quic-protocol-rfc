@@ -4,7 +4,7 @@ use super::*;
 use anyhow::Context;
 use pipestream_quic::v2::authority::{
     AuthorityStore, Authorization, Clock, ClockReading, Permission, StorePolicy,
-    payload::{PayloadPolicy, PayloadStore},
+    payload::{PayloadBackendKind, PayloadBackendSpec, PayloadPolicy, PayloadStore},
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{
@@ -79,6 +79,20 @@ pub fn mappings(path: &Path) -> Result<BTreeMap<[u8; 32], IdentityLabel>> {
     Ok(mappings)
 }
 
+fn open_payloads_at(
+    object_dir: &Path,
+    fresh: bool,
+    spec: &PayloadBackendSpec,
+    identity: pipestream_quic::persistence::StoreIdentity,
+    policy: PayloadPolicy,
+) -> Result<PayloadStore> {
+    Ok(if fresh {
+        PayloadStore::initialize_with_backend(object_dir, identity, policy, spec)?
+    } else {
+        PayloadStore::open_with_backend(object_dir, identity, policy, spec)?
+    })
+}
+
 struct TrustedSystemClock;
 impl Clock for TrustedSystemClock {
     fn read(&self) -> ClockReading {
@@ -124,6 +138,41 @@ pub struct Storage {
     trust_system_clock: bool,
     #[arg(long)]
     allow_skip: bool,
+    /// Payload storage backend: "fs" (default stage-file store) or an SPI
+    /// plane: "spi-fs" | "spi-postgres" | "spi-s3" | "spi-mongo". The
+    /// selection is persisted in the store binding (with a fingerprint of
+    /// the connection parameters), so reopening with a different backend or
+    /// endpoint is refused. Connection flags fall back to the PROBE_* env
+    /// vars used by the cross-language probe.
+    #[arg(long, default_value = "fs")]
+    payload_backend: String,
+    /// PostgreSQL URL for spi-postgres (env: PROBE_PG_URL).
+    #[arg(long, env = "PROBE_PG_URL")]
+    payload_pg_url: Option<String>,
+    /// S3 endpoint for spi-s3 (env: PROBE_S3_ENDPOINT).
+    #[arg(long, env = "PROBE_S3_ENDPOINT")]
+    payload_s3_endpoint: Option<String>,
+    /// S3 bucket for spi-s3 (env: PROBE_S3_BUCKET).
+    #[arg(long, env = "PROBE_S3_BUCKET")]
+    payload_s3_bucket: Option<String>,
+    /// S3 region for spi-s3 (env: PROBE_S3_REGION).
+    #[arg(long, env = "PROBE_S3_REGION", default_value = "us-east-1")]
+    payload_s3_region: String,
+    /// S3 key prefix for spi-s3 (env: PROBE_S3_PREFIX).
+    #[arg(long, env = "PROBE_S3_PREFIX", default_value = "payload-plane/")]
+    payload_s3_prefix: String,
+    /// S3 access key for spi-s3 (env: PROBE_S3_ACCESS_KEY).
+    #[arg(long, env = "PROBE_S3_ACCESS_KEY")]
+    payload_s3_access_key: Option<String>,
+    /// S3 secret key for spi-s3 (env: PROBE_S3_SECRET_KEY).
+    #[arg(long, env = "PROBE_S3_SECRET_KEY")]
+    payload_s3_secret_key: Option<String>,
+    /// MongoDB URI for spi-mongo (env: PROBE_MONGO_URI).
+    #[arg(long, env = "PROBE_MONGO_URI")]
+    payload_mongo_uri: Option<String>,
+    /// MongoDB database for spi-mongo (env: PROBE_MONGO_DATABASE).
+    #[arg(long, env = "PROBE_MONGO_DATABASE")]
+    payload_mongo_database: Option<String>,
     #[arg(long, default_value_t = 1024)]
     sessions: u64,
     #[arg(long, default_value_t = 10000)]
@@ -137,6 +186,83 @@ pub type Opened = (
     BTreeMap<[u8; 32], IdentityLabel>,
 );
 impl Storage {
+    fn backend_spec(&self, kind: PayloadBackendKind) -> Result<PayloadBackendSpec> {
+        let need = |value: &Option<String>, flag: &str| -> Result<String> {
+            value
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("{flag} is required for {kind}"))
+        };
+        match kind {
+            PayloadBackendKind::Filesystem => Ok(PayloadBackendSpec::Filesystem),
+            PayloadBackendKind::SpiFilesystem => Ok(PayloadBackendSpec::SpiFilesystem),
+            PayloadBackendKind::SpiPostgres => Ok(PayloadBackendSpec::SpiPostgres {
+                url: need(&self.payload_pg_url, "--payload-pg-url / PROBE_PG_URL")?,
+            }),
+            PayloadBackendKind::SpiS3 => Ok(PayloadBackendSpec::SpiS3 {
+                config: Box::new(pipestream_storage::S3Config {
+                    bucket: need(&self.payload_s3_bucket, "--payload-s3-bucket / PROBE_S3_BUCKET")?,
+                    prefix: self.payload_s3_prefix.clone(),
+                    endpoint_url: Some(need(
+                        &self.payload_s3_endpoint,
+                        "--payload-s3-endpoint / PROBE_S3_ENDPOINT",
+                    )?),
+                    region: self.payload_s3_region.clone(),
+                    access_key: need(
+                        &self.payload_s3_access_key,
+                        "--payload-s3-access-key / PROBE_S3_ACCESS_KEY",
+                    )?,
+                    secret_key: need(
+                        &self.payload_s3_secret_key,
+                        "--payload-s3-secret-key / PROBE_S3_SECRET_KEY",
+                    )?,
+                }),
+            }),
+            PayloadBackendKind::SpiMongo => Ok(PayloadBackendSpec::SpiMongo {
+                uri: need(&self.payload_mongo_uri, "--payload-mongo-uri / PROBE_MONGO_URI")?,
+                database: need(
+                    &self.payload_mongo_database,
+                    "--payload-mongo-database / PROBE_MONGO_DATABASE",
+                )?,
+            }),
+        }
+    }
+
+    /// Constructs the payload store. Service SPI backends (postgres, s3,
+    /// mongo) build their own tokio runtime during connect, and tokio
+    /// refuses to drive a runtime from inside an async worker thread ("Cannot
+    /// start a runtime from within a runtime") — so their construction runs
+    /// on a dedicated plain thread. This is the only tokio-worker context
+    /// the store is constructed in: request-time plane work already runs on
+    /// spawn_blocking or dedicated file-worker threads, where block_on is
+    /// legal. Local backends stay on the caller's thread.
+    fn open_payloads(
+        &self,
+        fresh: bool,
+        spec: &PayloadBackendSpec,
+        identity: pipestream_quic::persistence::StoreIdentity,
+        policy: PayloadPolicy,
+    ) -> Result<PayloadStore> {
+        let offloaded = matches!(
+            spec,
+            PayloadBackendSpec::SpiPostgres { .. }
+                | PayloadBackendSpec::SpiS3 { .. }
+                | PayloadBackendSpec::SpiMongo { .. }
+        );
+        if !offloaded {
+            return open_payloads_at(&self.object_dir, fresh, spec, identity, policy);
+        }
+        let object_dir = self.object_dir.clone();
+        let spec = spec.clone();
+        let handle = std::thread::Builder::new()
+            .name("payload-backend-open".to_string())
+            .spawn(move || open_payloads_at(&object_dir, fresh, &spec, identity, policy))
+            .map_err(|e| anyhow::anyhow!("payload backend thread failed to start: {e}"))?;
+        match handle.join() {
+            Ok(result) => result,
+            Err(_) => anyhow::bail!("payload backend construction panicked"),
+        }
+    }
+
     pub fn open(&self, fresh: bool) -> Result<Opened> {
         if !self.trust_system_clock {
             bail!(
@@ -163,19 +289,32 @@ impl Storage {
                 retained_output_bytes: Number(1 << 30),
             },
         };
-        let open = if fresh {
-            AuthorityStore::initialize
+        let payload_backend: PayloadBackendKind = self
+            .payload_backend
+            .parse()
+            .map_err(|_| anyhow::anyhow!("unknown --payload-backend"))?;
+        let spec = self.backend_spec(payload_backend)?;
+        let store = if fresh {
+            AuthorityStore::initialize_with_payload_backend(
+                &self.state_db,
+                IdentityLabel(self.authority.clone()),
+                policy,
+                PhysicalLimits::default(),
+                Arc::new(TrustedSystemClock),
+                access,
+                payload_backend,
+            )?
         } else {
-            AuthorityStore::open
+            AuthorityStore::open_with_payload_backend(
+                &self.state_db,
+                IdentityLabel(self.authority.clone()),
+                policy,
+                PhysicalLimits::default(),
+                Arc::new(TrustedSystemClock),
+                access,
+                payload_backend,
+            )?
         };
-        let store = open(
-            &self.state_db,
-            IdentityLabel(self.authority.clone()),
-            policy,
-            PhysicalLimits::default(),
-            Arc::new(TrustedSystemClock),
-            access,
-        )?;
         let policy = PayloadPolicy {
             objects: Id(self.payload_objects),
             bytes: Number(self.payload_bytes),
@@ -185,12 +324,7 @@ impl Storage {
             handles: Id(256),
             owner_handles: Id(64),
         };
-        let open = if fresh {
-            PayloadStore::initialize
-        } else {
-            PayloadStore::open
-        };
-        let payloads = open(&self.object_dir, store.payload_identity()?, policy)?;
+        let payloads = self.open_payloads(fresh, &spec, store.payload_identity()?, policy)?;
         store.bind_payloads(&payloads)?;
         Ok((store, payloads, mappings))
     }
@@ -199,6 +333,110 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        storage: Storage,
+    }
+
+    #[test]
+    fn payload_backend_defaults_to_fs_and_is_selectable() {
+        let base = [
+            "probe",
+            "--state-db",
+            "state.sqlite",
+            "--object-dir",
+            "objects",
+            "--authority",
+            "issuer",
+            "--principal-map",
+            "principals.tsv",
+        ];
+        let storage = TestCli::try_parse_from(base).unwrap().storage;
+        assert_eq!(storage.payload_backend, "fs");
+        let storage = TestCli::try_parse_from(
+            base.iter()
+                .chain(["--payload-backend", "fs"].iter())
+                .copied(),
+        )
+        .unwrap()
+        .storage;
+        assert_eq!(
+            storage.payload_backend.parse::<PayloadBackendKind>().unwrap(),
+            PayloadBackendKind::Filesystem
+        );
+    }
+
+    #[test]
+    fn spi_service_backends_require_connection_config() {
+        let base = [
+            "probe",
+            "--state-db",
+            "state.sqlite",
+            "--object-dir",
+            "objects",
+            "--authority",
+            "issuer",
+            "--principal-map",
+            "principals.tsv",
+        ];
+        // spi-postgres without a URL parses fine (flags are optional) but the
+        // spec builder refuses it.
+        let storage = TestCli::try_parse_from(
+            base.iter()
+                .chain(["--payload-backend", "spi-postgres"].iter())
+                .copied(),
+        )
+        .unwrap()
+        .storage;
+        assert!(
+            storage
+                .backend_spec(PayloadBackendKind::SpiPostgres)
+                .is_err()
+        );
+        let storage = TestCli::try_parse_from(
+            base.iter()
+                .chain(
+                    [
+                        "--payload-backend",
+                        "spi-postgres",
+                        "--payload-pg-url",
+                        "postgres://u:p@127.0.0.1:1/db",
+                    ]
+                    .iter(),
+                )
+                .copied(),
+        )
+        .unwrap()
+        .storage;
+        assert!(
+            storage
+                .backend_spec(PayloadBackendKind::SpiPostgres)
+                .is_ok()
+        );
+        // Env fallback: PROBE_PG_URL satisfies the requirement.
+        unsafe {
+            std::env::set_var("PROBE_PG_URL", "postgres://u:p@127.0.0.1:1/db");
+        }
+        let storage = TestCli::try_parse_from(
+            base.iter()
+                .chain(["--payload-backend", "spi-postgres"].iter())
+                .copied(),
+        )
+        .unwrap()
+        .storage;
+        assert!(
+            storage
+                .backend_spec(PayloadBackendKind::SpiPostgres)
+                .is_ok()
+        );
+        unsafe {
+            std::env::remove_var("PROBE_PG_URL");
+        }
+    }
+
     #[test]
     fn startup_reads_reject_nonregular_symlink_and_oversize_files() {
         let directory = tempfile::tempdir().unwrap();

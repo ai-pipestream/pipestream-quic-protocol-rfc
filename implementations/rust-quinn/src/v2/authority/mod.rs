@@ -228,6 +228,7 @@ pub struct AuthorityStore {
     physical: Arc<PhysicalGuard>,
     authority: IdentityLabel,
     policy: StorePolicy,
+    payload_backend: payload::PayloadBackendKind,
     clock: Arc<dyn Clock>,
     authorization: Arc<dyn Authorization>,
 }
@@ -249,6 +250,29 @@ impl AuthorityStore {
         clock: Arc<dyn Clock>,
         authorization: Arc<dyn Authorization>,
     ) -> Result<Self> {
+        Self::initialize_with_payload_backend(
+            path,
+            authority,
+            policy,
+            physical_limits,
+            clock,
+            authorization,
+            payload::PayloadBackendKind::default(),
+        )
+    }
+
+    /// Like [`AuthorityStore::initialize`], recording the operator's payload
+    /// backend selection; [`AuthorityStore::bind_payloads`] refuses a payload
+    /// root recorded under a different backend.
+    pub fn initialize_with_payload_backend(
+        path: &Path,
+        authority: IdentityLabel,
+        policy: StorePolicy,
+        physical_limits: PhysicalLimits,
+        clock: Arc<dyn Clock>,
+        authorization: Arc<dyn Authorization>,
+        payload_backend: payload::PayloadBackendKind,
+    ) -> Result<Self> {
         Self::open_inner(
             path,
             authority,
@@ -256,6 +280,7 @@ impl AuthorityStore {
             physical_limits,
             clock,
             authorization,
+            payload_backend,
             true,
         )
     }
@@ -270,6 +295,29 @@ impl AuthorityStore {
         clock: Arc<dyn Clock>,
         authorization: Arc<dyn Authorization>,
     ) -> Result<Self> {
+        Self::open_with_payload_backend(
+            path,
+            authority,
+            policy,
+            physical_limits,
+            clock,
+            authorization,
+            payload::PayloadBackendKind::default(),
+        )
+    }
+
+    /// Like [`AuthorityStore::open`], recording the operator's payload
+    /// backend selection; [`AuthorityStore::bind_payloads`] refuses a payload
+    /// root recorded under a different backend.
+    pub fn open_with_payload_backend(
+        path: &Path,
+        authority: IdentityLabel,
+        policy: StorePolicy,
+        physical_limits: PhysicalLimits,
+        clock: Arc<dyn Clock>,
+        authorization: Arc<dyn Authorization>,
+        payload_backend: payload::PayloadBackendKind,
+    ) -> Result<Self> {
         Self::open_inner(
             path,
             authority,
@@ -277,10 +325,12 @@ impl AuthorityStore {
             physical_limits,
             clock,
             authorization,
+            payload_backend,
             false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // constructor wiring, mirrors open/initialize
     fn open_inner(
         path: &Path,
         authority: IdentityLabel,
@@ -288,6 +338,7 @@ impl AuthorityStore {
         physical_limits: PhysicalLimits,
         clock: Arc<dyn Clock>,
         authorization: Arc<dyn Authorization>,
+        payload_backend: payload::PayloadBackendKind,
         initialize: bool,
     ) -> Result<Self> {
         authority.check()?;
@@ -305,6 +356,7 @@ impl AuthorityStore {
             physical,
             authority,
             policy,
+            payload_backend,
             clock,
             authorization,
         };

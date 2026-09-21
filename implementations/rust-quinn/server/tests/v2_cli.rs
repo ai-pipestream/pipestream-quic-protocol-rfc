@@ -106,6 +106,11 @@ impl Fixture {
     fn path(&self, name: &str) -> String {
         text(&self.directory.path().join(name))
     }
+    fn storage_with(&self, extra: &[&str]) -> Vec<String> {
+        let mut args = self.storage();
+        args.extend(extra.iter().map(|v| v.to_string()));
+        args
+    }
     fn storage(&self) -> Vec<String> {
         let mut args = vec![
             "--state-db".into(),
@@ -128,15 +133,22 @@ impl Fixture {
         args.extend(self.storage());
         assert!(run(self.directory.path(), &args, true).contains("AUTHORITY_INITIALIZED"));
     }
+    fn start_with(&mut self, extra: &[&str]) -> Server {
+        self.serial += 1;
+        self.start_inner(extra)
+    }
     fn start(&mut self) -> Server {
         self.serial += 1;
+        self.start_inner(&[])
+    }
+    fn start_inner(&mut self, extra: &[&str]) -> Server {
         let ready = self.directory.path().join(format!("ready-{}", self.serial));
         let log = self
             .directory
             .path()
             .join(format!("server-{}.log", self.serial));
         let mut args = vec!["v2".into(), "serve".into()];
-        args.extend(self.storage());
+        args.extend(self.storage_with(extra));
         args.extend([
             "--cert".into(),
             self.path("server.pem"),
@@ -292,6 +304,161 @@ impl Drop for Server {
 const DECLARE: &str = "01010101010101010101010101010101";
 const ADMIT: &str = "02020202020202020202020202020202";
 const CANCEL: &str = "03030303030303030303030303030303";
+
+#[test]
+fn spi_postgres_backend_initializes_and_serves_without_runtime_panic() {
+    // A docker postgres per the certification smoke (postgres:16-alpine).
+    if std::process::Command::new("docker")
+        .arg("version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| !s.success())
+        .unwrap_or(true)
+    {
+        eprintln!("docker unavailable: skipping spi-postgres smoke");
+        return;
+    }
+    let container = std::process::Command::new("docker")
+        .args([
+            "run", "-d", "--rm",
+            "-p", "127.0.0.1:0:5432",
+            "-e", "POSTGRES_PASSWORD=probe",
+            "-e", "POSTGRES_USER=postgres",
+            "-e", "POSTGRES_DB=probe",
+            "postgres:16-alpine",
+        ])
+        .output()
+        .unwrap();
+    assert!(container.status.success());
+    let id = String::from_utf8_lossy(&container.stdout).trim().to_string();
+    let _guard = scopeguard(id.clone());
+    let port_out = std::process::Command::new("docker")
+        .args(["port", &id, "5432"])
+        .output()
+        .unwrap();
+    let port: u16 = String::from_utf8_lossy(&port_out.stdout)
+        .trim()
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let url = format!("postgres://postgres:probe@127.0.0.1:{port}/probe");
+    // Wait for SQL readiness.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let ready = std::process::Command::new("docker")
+            .args(["exec", &id, "pg_isready", "-U", "postgres"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ready {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "postgres not ready");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    let fixture = Fixture::new();
+    // init-authority under spi-postgres must not panic (the rustls/
+    // runtime-from-runtime bug reproduced 6/6 here).
+    let mut args = vec!["v2".into(), "init-authority".into()];
+    args.extend(fixture.storage_with(&["--payload-backend", "spi-postgres"]));
+    let out = fixture.directory.path().join("init-pg.out");
+    let err = fixture.directory.path().join("init-pg.err");
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_pipestream-quinn"))
+        .args(&args)
+        .env("PROBE_PG_URL", &url)
+        .stdout(File::create(&out).unwrap())
+        .stderr(File::create(&err).unwrap())
+        .status()
+        .unwrap();
+    let output = fs::read_to_string(&out).unwrap() + &fs::read_to_string(&err).unwrap();
+    assert!(status.success(), "{output}");
+    assert!(output.contains("AUTHORITY_INITIALIZED"), "{output}");
+
+    // serve reaches readiness under the same backend.
+    let mut serve_args = vec!["v2".into(), "serve".into()];
+    serve_args.extend(fixture.storage_with(&["--payload-backend", "spi-postgres"]));
+    serve_args.extend([
+        "--cert".into(),
+        fixture.path("server.pem"),
+        "--key".into(),
+        fixture.path("server.key"),
+        "--client-ca".into(),
+        fixture.path("ca.pem"),
+        "--result-authority".into(),
+        "localhost:7443".into(),
+        "--ready-file".into(),
+        fixture.path("ready-pg"),
+    ]);
+    let log = fixture.directory.path().join("server-pg.log");
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_pipestream-quinn"))
+        .args(&serve_args)
+        .env("PROBE_PG_URL", &url)
+        .stdout(File::create(&log).unwrap())
+        .stderr(File::create(log.with_extension("err")).unwrap())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if fs::read_to_string(fixture.directory.path().join("ready-pg"))
+            .map(|s| s.trim().parse::<std::net::SocketAddr>().is_ok())
+            .unwrap_or(false)
+        {
+            break;
+        }
+        assert!(child.try_wait().unwrap().is_none(), "server exited before readiness");
+        assert!(std::time::Instant::now() < deadline, "server readiness timeout");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+struct ScopeGuard(String);
+fn scopeguard(id: String) -> ScopeGuard {
+    ScopeGuard(id)
+}
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", &self.0])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+#[test]
+fn spi_fs_backend_serves_readiness_and_refuses_a_changed_backend() {
+    let mut fixture = Fixture::new();
+    // Initialize the installation under the SPI plane.
+    let mut args = vec!["v2".into(), "init-authority".into()];
+    args.extend(fixture.storage_with(&["--payload-backend", "spi-fs"]));
+    assert!(run(fixture.directory.path(), &args, true).contains("AUTHORITY_INITIALIZED"));
+    // Serve reaches readiness under the SPI plane (this is the certification
+    // smoke check: the subject must not exit before readiness).
+    let server = fixture.start_with(&["--payload-backend", "spi-fs"]);
+    assert!(!server.address.is_empty(), "server reached readiness");
+    drop(server);
+    // Reopening under a changed backend is refused.
+    let mut serve_fs = vec!["v2".into(), "serve".into()];
+    serve_fs.extend(fixture.storage_with(&["--payload-backend", "fs"]));
+    serve_fs.extend([
+        "--cert".into(),
+        fixture.path("server.pem"),
+        "--key".into(),
+        fixture.path("server.key"),
+        "--client-ca".into(),
+        fixture.path("ca.pem"),
+        "--result-authority".into(),
+        "localhost:7443".into(),
+    ]);
+    let output = run(fixture.directory.path(), &serve_fs, false);
+    assert!(output.contains("backend"), "{output}");
+}
 
 #[test]
 fn cli_retry_is_explicit_replayable_and_skip_requires_enabled_policy() {
