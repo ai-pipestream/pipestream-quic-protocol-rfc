@@ -16,11 +16,9 @@ and the remaining interoperability and security work. The
 maps those three delivered features to implementation and tests, with explicit
 limits on the claims.
 
-The [2026-09-06 protocol corrections](docs/standards/protocol-review-corrections-2026-09.md)
-clarify transport-loss outcomes, streaming flow control, validated admission,
-payload integrity, and durable caller authentication. Appendix E records the
-version-1 limitations and remaining evidence needed for the successor contract;
-this is a reviewed draft, not a claim those features are already implemented.
+Appendix E of the draft records the version-1 limitations and the evidence
+needed for the successor contract; this is a reviewed draft, not a claim those
+features are already implemented.
 
 The [durable-work/results goal](docs/standards/durable-work-results-goal.md)
 tracks the successor contract, independent Rust/Java implementation, and equivalent

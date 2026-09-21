@@ -6,6 +6,75 @@ specification and review material, not executable code, wire encodings, extensio
 identifiers, storage formats, or deployed services. Local -04 remains separate
 from an author-approved Datatracker submission.
 
+## Disposition as of 2026-09-21 (main `7009caa0`)
+
+This section is the current status; the rest of the document is the historical
+2026-09-06 record. Checked by draft/code inspection, not by rerunning the gates.
+
+**Corrected requirements 1-7: all carried forward into local draft -05.**
+
+1. Transport loss vs. authoritative work failure: present ("Transport
+   observations and authoritative work outcomes are distinct", "Endpoints MUST
+   NOT infer a terminal work outcome", the "Unknown" outcome rule) plus the
+   retained-outcome profile of Section 10.6.5. Exercised cross-language by the
+   neutral acceptance matrix's lost-acknowledgment and reconnect rows.
+2. Flow control vs. congestion control (Section 5.1.6): present, with
+   incremental consumption permitting entities larger than a window.
+3. PROCESSING as validated admission (Sections 1.7, 6.2.2, 9.8 override):
+   present ("NOT be reported as validated admission before those checks
+   succeed").
+4. Checksum/validation reconciliation (Section 10.2): present (a local digest
+   "does not verify a sender's expected whole-entity digest"; profiles must
+   define the verification point).
+5. Principal authentication for durable sealed declarations (Section 9.8):
+   present and strengthened (Section 9.8 requires the Section 10.6.4
+   authenticated-session profile or equivalent). The 2026-09-06 caveat "Java's
+   current sealed fixtures do not demonstrate compliance" is CLOSED: both
+   reference implementations authenticate callers with mutual TLS and map
+   certificate fingerprints to owner principals (see REFERENCE_IMPLEMENTATION.md
+   and draft04-readiness.md, authenticated-session binding).
+6. Opaque encryption vs. parseable Core fields: present ("MUST NOT append
+   unspecified padding inside fixed-control frames").
+7. Terminology (scoped checkpoints, endpoint-local manifests, Stream 0 before
+   capability exchange): present.
+
+**Appendix E open items ("decisions deliberately not made implicitly"):**
+
+- Result delivery and input/output binding (E.6): RESOLVED for version 2 by
+  Section 12 and Appendix F (output identity, integrity, authorization,
+  retention, result delivery). Remains a recorded version-1 limitation.
+- Sealed/recovery composition (E.4, E.6): RESOLVED for version 2; Section 12
+  durable sessions integrate authenticated recovery. Independent recovery
+  implementations called for in E.4 now exist; see
+  recovery-execution-java-acceptance.md.
+- Authenticated profile selection: RESOLVED (Section 10.6.4
+  authenticated-session-v1; Section 12.1 negotiation).
+- Long-running work beyond the fixed 24-hour receipt interval (E.7): RESOLVED
+  for version 2; Section 12 defines retention distinct from receipt replay.
+- SCOPE_DIGEST count semantics (E.8): answered for the version-2 contract;
+  Section 12/Appendix F commitments are verified byte-exact across languages
+  and storage backends by the neutral matrix. For version 1 the digest remains
+  a status commitment, not an output proof, as the appendix states.
+- Identity and recycling (E.2): RESOLVED for version 2 (authority-issued
+  generations, disjoint producer namespaces). Version-1 namespaces remain as
+  recorded.
+- Still open, by design: the version-1 unsealed lifecycle's complete-set
+  evidence (E.1), a general bidirectional protocol and explicit cancellation
+  outcomes (E.1), the broad Layer 2 boolean (E.3), and the minimal-Core
+  question (E.8).
+
+**Evidence demands (E.5 and the closing paragraph): delivered.** The
+independent Java V2 implementation, the neutral cross-language failure matrix
+(66 rows, 64 PASS and 2 WAIVED, archive `durable-18d5e94dc4306b7a`, see
+conformance/results/async-neutral-v2/handoff.md), and the equivalent
+streaming-gRPC workload comparison all exist and are green. The storage-plane
+certifications (fs, postgres, s3, mongo, each 64/64) are recorded in
+docs/standards/storage-spi-verification.md.
+
+The Validation section below is the 2026-09-06 historical record. Its cited
+`/tmp` logs no longer exist and its test counts predate the version-2 work;
+current gates are far larger.
+
 ## Corrected requirements
 
 1. Sections 5.5 and 6.2.5 distinguish transport loss from authoritative work
