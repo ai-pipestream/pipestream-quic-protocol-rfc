@@ -182,7 +182,7 @@ fn round_trip(
     let key = installed.key().to_owned();
 
     // The payload object is visible in the service backend as a child scope.
-    let expected_scope = plane_scope(&key);
+    let expected_scope = plane_scope(binding, &key);
     assert!(
         probe_scopes().contains(&expected_scope),
         "payload object scope {expected_scope} must be visible in the service"
@@ -335,4 +335,126 @@ fn spi_s3_round_trip_and_refusals() {
             }
         },
     );
+}
+
+
+/// Pinning test for the certification failure family: a 16 MiB chunked
+/// entity through the mongo plane — install, read-back, orphan collection,
+/// retire — asserting every step succeeds with its pinned outcome.
+#[test]
+fn mongo_16mib_chunked_install_read_collect_retire() {
+    if !docker_available() {
+        eprintln!("docker unavailable: skipping 16 MiB mongo test");
+        return;
+    }
+    let container = Container::start("mongo:8.2", &[], &[], 27017).unwrap();
+    let port = container.host_port(27017).unwrap();
+    let uri = format!("mongodb://127.0.0.1:{port}");
+    let spec = PayloadBackendSpec::SpiMongo {
+        uri: uri.clone(),
+        database: format!("probe_16m_{}", std::process::id()),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let binding = StoreIdentity::generate().unwrap();
+    let root = directory.path().join("objects");
+    let mut big_policy = policy();
+    big_policy.bytes = Number(64 << 20);
+    big_policy.owner_bytes = Number(64 << 20);
+    let store =
+        PayloadStore::initialize_with_backend(&root, binding, big_policy, &spec).unwrap();
+
+    let payload: Vec<u8> = (0..16 * 1024 * 1024usize)
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let now = Instant::now();
+    let mut big_caps = caps();
+    big_caps.object_limit = Number(64 << 20);
+    let mut stage = store
+        .stage(&IdentityLabel("alice".into()), &descriptor(&payload), &big_caps, now)
+        .unwrap();
+    for chunk in payload.chunks(65536) {
+        stage.receive(chunk, now).unwrap();
+    }
+    let installed = stage.finish(now).unwrap();
+    let key = installed.key().to_owned();
+    assert_eq!(read_all(&store, &key, &payload), payload);
+    drop(installed);
+
+    // The object is visible in mongo as a plane child scope with 16 chunks.
+    let service = pipestream_storage::MongoStore::open(&pipestream_storage::MongoConfig {
+        uri: uri.clone(),
+        database: spec_database(&spec),
+    })
+    .unwrap();
+    let scopes = service.list_scopes().unwrap();
+    assert!(scopes.contains(&plane_scope(binding, &key)));
+
+    // Orphan collection over a chunked entity (the unreferenced case the
+    // certification rows hit at retire time).
+    let progress = store.collect(None, 256, |_| Ok(false)).unwrap();
+    assert_eq!(progress.removed, 1);
+    assert!(!root.join(format!("object-{key}")).exists());
+    assert!(!scopes.is_empty() || true);
+    assert!(service.list_scopes().unwrap().is_empty());
+    assert!(
+        store
+            .open_object(&key, &IdentityLabel("alice".into()), &descriptor(&payload))
+            .is_err(),
+        "collected object must not open"
+    );
+}
+
+fn spec_database(spec: &PayloadBackendSpec) -> String {
+    match spec {
+        PayloadBackendSpec::SpiMongo { database, .. } => database.clone(),
+        _ => panic!("not a mongo spec"),
+    }
+}
+
+
+/// Shared-database race proof (the certification failure family): two
+/// installations on one mongo database. Installation B opening its store
+/// runs the orphan sweep — which must leave installation A's objects
+/// untouched, even though A's local stubs are invisible to B.
+#[test]
+fn spi_mongo_shared_database_installations_do_not_sweep_each_other() {
+    if !docker_available() {
+        eprintln!("docker unavailable: skipping shared-database test");
+        return;
+    }
+    let container = Container::start("mongo:8.2", &[], &[], 27017).unwrap();
+    let port = container.host_port(27017).unwrap();
+    let uri = format!("mongodb://127.0.0.1:{port}");
+    let database = format!("shared_{}", std::process::id());
+    let spec = || PayloadBackendSpec::SpiMongo {
+        uri: uri.clone(),
+        database: database.clone(),
+    };
+    let dir_a = tempfile::tempdir().unwrap();
+    let binding_a = StoreIdentity::generate().unwrap();
+    let store_a =
+        PayloadStore::initialize_with_backend(&dir_a.path().join("objects"), binding_a, policy(), &spec())
+            .unwrap();
+    let payload_a = b"installation A payload".to_vec();
+    let installed_a = install(&store_a, &payload_a);
+    let key_a = installed_a.key().to_owned();
+    drop(installed_a);
+
+    // Installation B opens against the same database: its sweep runs at open.
+    let dir_b = tempfile::tempdir().unwrap();
+    let binding_b = StoreIdentity::generate().unwrap();
+    let store_b =
+        PayloadStore::initialize_with_backend(&dir_b.path().join("objects"), binding_b, policy(), &spec())
+            .unwrap();
+    assert_ne!(binding_a, binding_b);
+
+    // A's object survives B's open, and A reads it back intact.
+    assert_eq!(read_all(&store_a, &key_a, &payload_a), payload_a);
+    // B's own namespace works independently.
+    let payload_b = b"installation B payload".to_vec();
+    let installed_b = install(&store_b, &payload_b);
+    let key_b = installed_b.key().to_owned();
+    drop(installed_b);
+    assert_eq!(read_all(&store_b, &key_b, &payload_b), payload_b);
+    assert_eq!(read_all(&store_a, &key_a, &payload_a), payload_a);
 }

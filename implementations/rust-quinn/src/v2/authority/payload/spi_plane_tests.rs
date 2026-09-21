@@ -153,7 +153,7 @@ fn spi_plane_sweeps_orphaned_entities_at_open() {
         let orphan = format!("orphaned bytes {orphan_id:08x}").into_bytes();
         plane
             .put(
-                &plane_scope(&format!("{orphan_id:08x}000000000000000000000000")),
+                &plane_scope(binding, &format!("{orphan_id:08x}000000000000000000000000")),
                 0,
                 &orphan,
                 &pipestream_storage::sha256(&orphan),
