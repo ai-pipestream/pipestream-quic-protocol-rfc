@@ -36,6 +36,8 @@ public final class FileJournal implements Journal {
   private static final int RECORD_HEADER_BYTES = 1 + 8 + 4 + 4;
   private static final String JOURNAL_DIRECTORY = "journal";
   private static final String LOG_FILE_NAME = "journal.log";
+  private static final String MARKER_FILE_NAME = "journal.marker";
+  private static final int MIN_RECORD_BYTES = RECORD_HEADER_BYTES + 2 + StoreLayout.DIGEST_BYTES;
   private static final Set<Path> OPEN_ROOTS = ConcurrentHashMap.newKeySet();
 
   private static final class EntryState {
@@ -275,17 +277,32 @@ public final class FileJournal implements Journal {
   }
 
   /**
-   * Rebuilds the index from the log, truncating at most one torn trailing
-   * record: bytes after the last checksummed record never belonged to an
-   * append that returned success.
+   * Rebuilds the index from the log. A marker file distinguishes a
+   * genuinely fresh journal from an initialized one whose log was wiped:
+   * the marker is written only after the log carries its magic durably, so
+   * an empty or vanished log with a live marker is CORRUPT, never a silent
+   * fresh start. Journals predating the marker are adopted once their log
+   * verifies. Recovery truncates at most one torn trailing record: bytes
+   * after the last checksummed record never belonged to an append that
+   * returned success.
    */
   private void recover() throws StorageException, IOException {
+    Path marker = journalDirectory.resolve(MARKER_FILE_NAME);
+    boolean initialized = Files.exists(marker, LinkOption.NOFOLLOW_LINKS);
     long size = log.size();
     if (size == 0) {
+      if (initialized) {
+        throw StorageException.corrupt(
+            "journal log is absent or empty on an initialized root");
+      }
       writeFully(log, MAGIC);
       log.force(true);
+      writeMarker(marker);
       syncDirectory(journalDirectory);
       return;
+    }
+    if (size < MAGIC.length) {
+      throw StorageException.corrupt("journal log is shorter than its magic");
     }
     log.position(0);
     ByteBuffer magic = ByteBuffer.allocate(MAGIC.length);
@@ -297,7 +314,16 @@ public final class FileJournal implements Journal {
     long lastGood = position;
     while (position < size) {
       long scanned = scanRecord(position, size);
-      if (scanned < 0) break;
+      if (scanned < 0) {
+        // A record claiming bytes past the end is a torn tail only when
+        // nothing parseable follows; crafted mid-log garbage with valid
+        // geometry must not silently discard committed records.
+        if (midLogRecordExists(position, size)) {
+          throw StorageException.corrupt(
+              "journal holds crafted garbage at offset " + position);
+        }
+        break;
+      }
       position = scanned;
       lastGood = position;
     }
@@ -305,7 +331,67 @@ public final class FileJournal implements Journal {
       log.truncate(lastGood);
       log.force(true);
     }
+    if (!initialized) writeMarker(marker);
     log.position(log.size());
+  }
+
+  private void writeMarker(Path marker) throws IOException {
+    try (FileChannel channel = FileChannel.open(marker, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+      writeFully(channel, MAGIC);
+      channel.force(true);
+    }
+  }
+
+  /**
+   * Whether a complete, checksummed record exists at any offset after
+   * {@code from}: evidence that bytes claiming to run past the file end are
+   * mid-log garbage spliced in front of committed records, not a torn tail.
+   */
+  private boolean midLogRecordExists(long from, long size) throws IOException {
+    long limit = size - MIN_RECORD_BYTES;
+    for (long probe = from + 1; probe <= limit; probe++) {
+      if (recordAt(probe, size)) return true;
+    }
+    return false;
+  }
+
+  /** Probes one offset for a complete checksummed record wholly inside the file. */
+  private boolean recordAt(long offset, long size) throws IOException {
+    if (size - offset < MIN_RECORD_BYTES) return false;
+    log.position(offset);
+    ByteBuffer header = ByteBuffer.allocate(RECORD_HEADER_BYTES);
+    if (readUpTo(header) != RECORD_HEADER_BYTES) return false;
+    header.flip();
+    byte type = header.get(0);
+    int idLength = header.getInt(9);
+    int payloadLength = header.getInt(13);
+    if ((type != TYPE_INTENT && type != TYPE_COMMIT) || idLength < 1 || idLength > MAX_INTENT_ID_BYTES
+        || payloadLength < 1 || payloadLength > MAX_RECORD_BYTES) {
+      return false;
+    }
+    long recordEnd = offset + RECORD_HEADER_BYTES + (long) idLength + payloadLength + StoreLayout.DIGEST_BYTES;
+    if (recordEnd > size) return false;
+    byte[] id = new byte[idLength];
+    if (readUpTo(ByteBuffer.wrap(id)) != idLength) return false;
+    byte[] payload = new byte[payloadLength];
+    if (readUpTo(ByteBuffer.wrap(payload)) != payloadLength) return false;
+    byte[] checksum = new byte[StoreLayout.DIGEST_BYTES];
+    if (readUpTo(ByteBuffer.wrap(checksum)) != StoreLayout.DIGEST_BYTES) return false;
+    MessageDigest hash = StoreLayout.sha256();
+    hash.update(header.array());
+    hash.update(id);
+    hash.update(payload);
+    return MessageDigest.isEqual(hash.digest(), checksum);
+  }
+
+  private int readUpTo(ByteBuffer bytes) throws IOException {
+    int total = 0;
+    while (bytes.hasRemaining()) {
+      int read = log.read(bytes);
+      if (read < 0) break;
+      total += read;
+    }
+    return total;
   }
 
   /** Returns the offset just past the record at {@code offset}, or -1 for a torn tail. */

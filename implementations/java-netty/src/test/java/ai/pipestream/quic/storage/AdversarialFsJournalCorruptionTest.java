@@ -126,41 +126,35 @@ final class AdversarialFsJournalCorruptionTest {
   }
 
   /**
-   * Known acceptance gap (report bug list): a zero-length log is treated as a fresh
-   * journal and silently reinitialized — every committed record disappears without
-   * any error. Pinned as observed behavior: the test asserts the silent loss.
+   * Fixed: a zero-length log on an initialized root (the marker file exists)
+   * is CORRUPT — the committed records it held cannot silently vanish into a
+   * fresh start.
    */
-  @Test void zeroLengthLogSilentlyReinitializesAndLosesCommittedRecords() throws Exception {
+  @Test void zeroLengthLogOnInitializedRootIsCorrupt() throws Exception {
     durableLog();
     Files.write(logFile(), new byte[0]);
-    try (Journal reopened = FileJournal.open(directory)) {
-      assertEquals(List.of(), reopened.replay(0), "committed records are silently gone");
-      assertEquals(1, reopened.appendIntent(new Journal.Intent("next", bytes("tail"))),
-          "cursor restarts at 1 as if the journal were brand new");
-    }
+    StorageException failure = assertThrows(StorageException.class, () -> FileJournal.open(directory));
+    assertEquals(StorageException.Kind.CORRUPT, failure.kind(), failure.getMessage());
   }
 
-  /** Same gap as above via the delete path: a missing log is indistinguishable from fresh. */
-  @Test void deletedLogSilentlyReinitializesAndLosesCommittedRecords() throws Exception {
+  /** Fixed via the same marker: a deleted log on an initialized root is CORRUPT. */
+  @Test void deletedLogOnInitializedRootIsCorrupt() throws Exception {
     durableLog();
     Files.delete(logFile());
-    try (Journal reopened = FileJournal.open(directory)) {
-      assertEquals(List.of(), reopened.replay(0));
-    }
+    StorageException failure = assertThrows(StorageException.class, () -> FileJournal.open(directory));
+    assertEquals(StorageException.Kind.CORRUPT, failure.kind(), failure.getMessage());
   }
 
-  @Test void truncationInsideTheMagicMapsToTransient() throws Exception {
+  @Test void truncationInsideTheMagicMapsToCorrupt() throws Exception {
     durableLog();
     for (int length = 1; length < MAGIC.length; length++) {
       byte[] log = Files.readAllBytes(logFile());
       Files.write(logFile(), java.util.Arrays.copyOf(log, length));
-      // Known mapping gap (report bug list): a partial magic makes recovery's magic
-      // read hit EOF, which is classified as an I/O failure (TRANSIENT, retryable)
-      // rather than CORRUPT — a retry loop would spin forever on permanent damage.
-      // Only a full-length but wrong magic is CORRUPT.
+      // Fixed: a partial magic is permanent damage, not a retryable I/O
+      // failure; anything shorter than the magic is CORRUPT.
       StorageException failure = assertThrows(StorageException.class,
           () -> FileJournal.open(directory), "magic truncated to " + length);
-      assertEquals(StorageException.Kind.TRANSIENT, failure.kind(),
+      assertEquals(StorageException.Kind.CORRUPT, failure.kind(),
           "magic truncated to " + length);
     }
   }
@@ -211,15 +205,15 @@ final class AdversarialFsJournalCorruptionTest {
   }
 
   /**
-   * Known acceptance gap (report bug list): 49 bytes of crafted garbage carrying
-   * valid record geometry (type INTENT, idLen 1) but a payload length of
-   * {@code MAX_RECORD_BYTES} spliced at a record boundary make recovery read a
-   * record end far past the file end, classify everything after the splice as a
-   * torn tail, and silently truncate two committed records. Pinned as observed
-   * behavior: the test asserts the silent loss, contrasting with
+   * Fixed: the same 49 crafted bytes now fail recovery as CORRUPT. A record
+   * claiming bytes past the file end is a torn tail only when nothing
+   * parseable follows; here complete checksummed records sit after the
+   * splice, so the garbage is mid-log corruption, not a truncatable tail,
+   * and the committed records it shadowed are refused rather than silently
+   * discarded. Contrasts with
    * {@link #garbageWithPlausibleSmallGeometryMidLogIsCorrupt()}.
    */
-  @Test void craftedMidLogGarbageWithHugeClaimedPayloadSilentlyDiscardsCommittedTail() throws Exception {
+  @Test void craftedMidLogGarbageWithHugeClaimedPayloadIsCorrupt() throws Exception {
     byte[] pristine = durableLog();
     byte[] forgedHeader = ByteBuffer.allocate(RECORD_HEADER_BYTES)
         .put((byte) 0).putLong(2L).putInt(1).putInt(Journal.MAX_RECORD_BYTES).array();
@@ -227,12 +221,8 @@ final class AdversarialFsJournalCorruptionTest {
         forgedHeader,
         java.util.Arrays.copyOfRange(pristine, MAGIC.length + RECORD_BYTES, pristine.length));
     Files.write(logFile(), spliced);
-    try (Journal reopened = FileJournal.open(directory)) {
-      assertEquals(List.of("i1"),
-          reopened.replay(0).stream().map(entry -> entry.intent().intentId()).toList(),
-          "committed tail after the splice is silently discarded");
-      assertEquals(2, reopened.appendIntent(new Journal.Intent("post-splice", bytes("x"))));
-    }
+    StorageException failure = assertThrows(StorageException.class, () -> FileJournal.open(directory));
+    assertEquals(StorageException.Kind.CORRUPT, failure.kind(), failure.getMessage());
   }
 
   @Test void garbageWithPlausibleSmallGeometryMidLogIsCorrupt() throws Exception {
