@@ -1,5 +1,26 @@
 # Draft-06 review-fix plan (2026-10-11)
 
+STATUS: EXECUTED 2026-10-12. All six work packages landed on main
+(WP1 `03f42f20`, WP2 `1394f284`/`e61ecc98`/`b408dee0`, WP3 `0c0e6dde`,
+WP4 `e7468ae0`/`c3d0bd2d`, WP5 `faa46ef1`, WP6 `a72d7546`, gate fixes
+`f1b9c5a8`). Final gate: idnits 0 errors/0 flaws/0 warnings (2 pre-existing
+comments), test-vectors untouched, cddl/ carries only the claim-id bound,
+pipestream-conformance 121/121, drift test green across all inline CDDL
+copies. WP3/WP4 were executed by the krick-1 agent and pulled via ssh.
+
+Follow-ups found during execution (not part of this plan):
+
+1. BARRIER parent-mismatch error code diverges: Rust returns
+   PIPESTREAM_ENTITY_INVALID (0x05), Java returns PIPESTREAM_SCOPE_INVALID
+   (0x09) (SealedServer.java via SealedScope.invalid). The spec now
+   documents 0x05; the Java lane needs a one-line code fix plus a
+   regression test.
+2. Pre-existing clippy errors under rust 1.99
+   (chunks_exact_to_as_chunks in durable/scenarios.rs and main.rs) are
+   unrelated to this pass; either fix or pin the clippy toolchain.
+3. Before this pass the rendered draft artifacts had been stale relative
+   to sections-src since 84d1e17e; the final gate now regenerates them.
+
 Baseline: tag `draft05-review-baseline` (main `b80f8775`). Source of truth for
 the draft is `sections-src/*.md`; regenerate with `./build.sh core 05`.
 
