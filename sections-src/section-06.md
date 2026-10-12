@@ -556,8 +556,8 @@ yield-token = {
 }
 
 claim-check = {
-  claim-id: uint,
-  entity-id: uint,
+  claim-id: 1..18446744073709551615,
+  entity-id: entity-id,
   ? scope-id: uint,
   expiry-timestamp: uint,        ; Unix epoch microseconds
   ? validation: stopping-point-validation,

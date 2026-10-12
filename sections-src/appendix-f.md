@@ -44,8 +44,8 @@ v2-child-scope = [scope: v2-id, producer: v2-producer]
 v2-counts = [success: v2-number, failure: v2-number,
              cancelled: v2-number, skipped: v2-number]
 
-; control-limit caps the body of one control frame in either direction;
-; a CAPABILITIES body stays bounded by its 4096-octet minimum (Section 12.1).
+; control-limit caps one control-frame body in each direction;
+; CAPABILITIES bodies stay bounded by the 4096-octet minimum (12.1).
 v2-capabilities = [
   response: 0..1, supported: v2-extension-list,
   required: v2-extension-list,
@@ -54,8 +54,8 @@ v2-capabilities = [
   stream-idle-ms: 1000..300000, stream-lifetime-ms: 1000..86400000
 ]
 
-; SESSION messages intentionally carry no operation ID; session creation
-; replays by (owner, creation-sequence) (Section 12.3).
+; SESSION messages carry no operation ID; creation replays by
+; (owner, creation-sequence) (Section 12.3).
 v2-session-message =
     [0, request: v2-id, creation-sequence: v2-id, policy: v2-policy]
   / [1, request: v2-id, authority: v2-label, owner: v2-label,
