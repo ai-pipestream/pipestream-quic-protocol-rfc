@@ -50,7 +50,8 @@ particularly where browser access or HTTP infrastructure is required.
 Such a mapping would need to specify session establishment, stream
 identification, errors, authentication, and extension negotiation. This
 draft specifies only direct QUIC and does not assert that WebTransport is
-unsuitable or intrinsically slower.
+unsuitable or intrinsically slower. {{RFC9297}} defines HTTP Datagrams and the
+Capsule Protocol, not WebTransport itself.
 
 ## Media over QUIC and Broker-Based Systems
 
