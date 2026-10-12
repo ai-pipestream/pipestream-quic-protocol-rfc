@@ -88,7 +88,7 @@ Entity ID (32 bits):
 :   Unsigned integer identifying the entity.
 
 Scope ID (32 bits):
-:   Identifier for the scope to which this entity belongs. Expanding to 32 bits ensures uniqueness across high-frequency workloads.
+:   Identifier for the scope to which this entity belongs. Its 32-bit width supports uniqueness across high-frequency workloads.
 
 Reserved (32 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
@@ -171,7 +171,7 @@ The C flag is a connection-level signal. It MUST appear only on an UNSPECIFIED s
 STATUS frames flow in both directions on Stream 0. For each entity, responsibility for status reporting is divided between the originating endpoint (the endpoint that assigned the Entity ID and transmits the entity) and the processing endpoint (the endpoint that receives the corresponding Entity Stream):
 
 1. The originating endpoint MAY announce an entity with a PENDING status frame before opening its Entity Stream.
-2. Once the Entity Stream has been opened, the processing endpoint is authoritative for the entity's lifecycle and emits the STATUS frames for subsequent transitions (PROCESSING, DEHYDRATING, REHYDRATING, COMPLETE, FAILED, and the Layer 2 statuses).
+2. Once the Entity Stream has been opened, the processing endpoint is authoritative for the entity's lifecycle and emits the STATUS frames for subsequent transitions (PROCESSING, DEHYDRATING, REHYDRATING, COMPLETE, FAILED, CHECKPOINT, and the Layer 2 statuses).
 3. The originating endpoint MUST NOT assign a terminal lifecycle status on the processing endpoint's behalf because of a reset, timeout, or lost connection. It records an unknown outcome locally and uses the negotiated lifecycle's recovery procedures, if any (Section 5.5).
 4. The originating endpoint advances its cursor based on observed terminal statuses and announces cursor advancement using the C flag (Section 6.2.4).
 
@@ -229,12 +229,12 @@ Entities Failed (64 bits):
 :   The number of entities that reached a terminal failure state.
 
 Entities Deferred (64 bits):
-:   The number of entities that were deferred via claim checks.
+:   A cumulative count of entities that entered DEFERRED at least once; this count MAY overlap with Entities Succeeded and Entities Failed. A scope containing a non-terminal DEFERRED entity does not close until redemption resolves it.
 
 Merkle Root (256 bits):
 :   The SHA-256 Merkle root covering all entity statuses in the scope (see Section 9.5).
 
-The SCOPE_DIGEST payload is 72 octets (77 octets on the wire including the UCF header). The Scope ID MUST match the 32-bit identifier defined in Section 6.2.1.
+The SCOPE_DIGEST payload is 72 octets (77 octets on the wire including the UCF header). The Scope ID MUST match the 32-bit identifier allocated as specified in Section 9.4.
 
 ## Barrier Frame (0x55)
 
@@ -266,6 +266,36 @@ Parent Entity ID (32 bits):
 
 The BARRIER payload is 12 octets (17 octets on the wire including the UCF header).
 
+### Barrier Procedure
+
+BARRIER synchronizes a requester with the completion of a child scope: it
+reports whether the subtree rooted at the parent entity has quiesced. Both
+reference implementations implement the following procedure.
+
+1. The requester sends a BARRIER request with S=0 (waiting), the Scope ID of
+   the child scope, and the Parent Entity ID of the entity whose sub-tree is
+   blocked by this barrier.
+2. An endpoint that has not negotiated Layer 1 MUST reject a BARRIER frame
+   with PIPESTREAM_LAYER_UNSUPPORTED (0x0C).
+3. A frame with the released bit set is not a request; the receiver MUST
+   reject it with PIPESTREAM_ENTITY_INVALID (0x05).
+4. The receiver evaluates the request against its registered scopes. A Scope
+   ID that is unknown, or that names the root scope, is rejected with
+   PIPESTREAM_SCOPE_INVALID (0x09).
+5. A request whose Parent Entity ID does not match the scope's registered
+   parent MUST be rejected with PIPESTREAM_ENTITY_INVALID (0x05).
+6. Otherwise the receiver responds immediately with a BARRIER frame for the
+   same Scope ID, carrying the scope's registered parent entity. The response
+   carries S=1 (released) once the scope has closed with its SCOPE_DIGEST,
+   that is, once the parent entity's subtree has quiesced; it carries S=0
+   (waiting) while the scope remains open. A requester whose barrier has not
+   released MAY send further BARRIER requests to poll the same scope; each
+   request is answered independently with the scope's state when it is
+   processed.
+7. The requester MUST verify that the response carries the same Scope ID and
+   Parent Entity ID as its request and MUST treat a mismatch as
+   PIPESTREAM_ENTITY_INVALID (0x05).
+
 ## GOAWAY Frame (0x56)
 
 The GOAWAY frame signals that the sender will not accept new entities beyond a specified Entity ID. It enables graceful shutdown: in-flight entities with IDs at or below the Last Entity ID are processed to completion, while the peer refrains from opening new Entity Streams.
@@ -292,7 +322,7 @@ Reserved (32 bits):
 :   Reserved for future use. MUST be zero when sent and MUST be ignored by receivers.
 
 Last Entity ID (32 bits):
-:   The highest Entity ID that the sender will process. Entities with IDs greater than this value (per the circular ordering defined in Section 9.1) MUST NOT be sent by the peer after receiving this frame.
+:   The highest Entity ID that the sender will process. Entities with IDs greater than this value under the circular comparison function is_before (Section 9.3) MUST NOT be sent by the peer after receiving this frame.
 
 The GOAWAY payload is 8 octets (13 octets on the wire including the UCF header).
 
@@ -304,7 +334,7 @@ The GOAWAY payload is 8 octets (13 octets on the wire including the UCF header).
 4. Once all entities are resolved, either peer MAY close the QUIC connection with PIPESTREAM_NO_ERROR (0x00).
 5. If an endpoint receives an entity with an ID above the Last Entity ID after sending GOAWAY, it MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05).
 
-An endpoint MAY send multiple GOAWAY frames to progressively lower the Last Entity ID. The Last Entity ID MUST NOT increase across successive GOAWAY frames within the same connection, where "increase" is evaluated using the circular ordering function `is_before` defined in Section 9.3.
+An endpoint MAY send multiple GOAWAY frames to progressively lower the Last Entity ID. The Last Entity ID MUST NOT increase across successive GOAWAY frames within the same connection, where "increase" is evaluated using the circular comparison function is_before (Section 9.3).
 
 ## Yield and Claim Check Extensions (Layer 2)
 
@@ -326,6 +356,8 @@ Extension Length (32 bits):
 :   The total length of the extension data that follows this header, in octets. This allows receivers that do not support specific status extensions to skip the extension data and continue parsing the control stream.
 
 If E=1 is set for a Status code that does not define an extension layout in this specification (or a negotiated extension), the receiver MUST use the Extension Length to skip the data. If the Extension Length is zero, extends beyond the end of the frame as delimited by the UCF Length field, or is missing, the receiver MUST treat the frame as malformed and close the connection with PIPESTREAM_FRAME_ERROR (0x0D).
+
+A frame carries exactly one extension: the Extension Length MUST equal the number of octets remaining in the frame payload.
 
 ### Yield Extension (Stat = 0x8)
 
@@ -352,7 +384,7 @@ Token Length (24 bits):
 Yield Token (variable):
 :   The opaque continuation state.
 
-For a Yield Extension, the Extension Length (Section 6.6.1) MUST equal 4 + Token Length. A mismatch MUST be treated as PIPESTREAM_FRAME_ERROR (0x0D).
+For a Yield Extension, the Extension Length (Section 6.6.1) MUST equal 4 + Token Length. A mismatch MUST be treated as PIPESTREAM_FRAME_ERROR (0x0D). Yield Tokens SHOULD be at most 4096 octets unless a profile states otherwise.
 
 #### Yield Reason Codes
 
@@ -388,6 +420,8 @@ Claim Check ID (64 bits):
 
 Expiry Timestamp (64 bits):
 :   Unix epoch timestamp in microseconds when the claim expires.
+
+For a Claim Check Extension, the Extension Length (Section 6.6.1) MUST equal 16; a mismatch MUST be treated as PIPESTREAM_FRAME_ERROR (0x0D).
 
 ## Serialized Message Frames (0x80-0xFF)
 
