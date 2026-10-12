@@ -104,6 +104,8 @@ failure-action = &(
 
 ## PROCESS Action
 
+Completion-policy semantics from Section 8.3 apply here.
+
 For QUORUM, `min-success-ratio` MUST be present and finite, with a value
 between zero and one, inclusive.
 Its semantic value is the exact binary rational represented by an IEEE 754
@@ -142,6 +144,9 @@ and MUST NOT be treated as a closed scope with a failed policy.
 | REHYDRATE | N:1 merge of siblings from dehydration |
 | AGGREGATE | N:1 with reduction function |
 | PASSTHROUGH | Metadata-only modification |
+
+Process modes are application-role labels; no protocol field signals them
+and Core imposes no behavior per mode.
 
 ## SINK Action
 

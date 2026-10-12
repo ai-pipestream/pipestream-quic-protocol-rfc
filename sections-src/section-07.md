@@ -16,7 +16,7 @@ does not define application-specific payload structure.
 
 ## Data Layers
 
-PipeStream defines a 2-bit Data Layer field (values 0-3) in the Entity
+PipeStream defines an integer Data Layer field with values 0-3 in the Entity
 Header that identifies the payload encoding class. The semantics of each
 layer value are defined by Application Profile specifications. The core
 protocol does not assign meaning to specific layer values; it ensures
@@ -80,6 +80,9 @@ encryption-metadata = {
   ? context: { * tstr => tstr }, ; Encryption context
 }
 ~~~~
+
+The file-storage-reference type is currently specification-only; no
+reference implementation emits or parses it on the wire (see Appendix D).
 
 The algorithm and provider strings above are illustrative, not a negotiated
 cryptographic suite. In particular, a CBC label alone does not supply message

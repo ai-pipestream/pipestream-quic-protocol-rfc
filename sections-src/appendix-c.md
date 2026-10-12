@@ -24,7 +24,7 @@ example companion profile that defines such messages.
 ; the CBOR encoding but record the maximum value each
 ; field may carry.
 ;
-;   uint32  values 0..4294967295     (Scope ID)
+;   uint32  values 0..4294967295     (Scope IDs, failure-code)
 ;   entity-id values 1..4294967292   (assignable Entity ID)
 ;   uint64  values 0..2^64-1         (counters, timestamps)
 ;
@@ -196,7 +196,7 @@ checkpoint-flags = uint .le 1
 
 claim-redemption-frame = {
   flags: claim-redemption-flags,
-  claim-id: uint .gt 0,
+  claim-id: 1..18446744073709551615,
   session-id: tstr,
   state-checksum: bstr .size 32,
 }
@@ -227,6 +227,9 @@ entity-status = &(
 ; -----------------------------------------------------------
 ; Assembly Manifest entry
 ; -----------------------------------------------------------
+; The Assembly Manifest is a local data structure (Section 9.2),
+; not a wire message; its plain uints follow that local logical
+; structure rather than the wire aliases above.
 
 assembly-manifest-entry = {
   parent-id: uint,
@@ -270,8 +273,8 @@ yield-reason = &(
 ; -----------------------------------------------------------
 
 claim-check = {
-  claim-id: uint,
-  entity-id: uint,
+  claim-id: 1..18446744073709551615,
+  entity-id: entity-id,
   ? scope-id: uint,
   expiry-timestamp: uint,
   ? validation: stopping-point-validation,
