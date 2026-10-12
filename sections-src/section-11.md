@@ -28,7 +28,7 @@ Specification:
 
 ## PipeStream Frame Type Registry
 
-IANA is requested to create the "PipeStream Frame Types" registry. All frames on Stream 0 MUST use a 4-octet length prefix following the 1-octet Type. The registry is partitioned into three ranges that determine both the registration policy and the framing class of the payload:
+IANA is requested to create the "PipeStream Frame Types" registry. Frames on Stream 0 use the UCF framing defined in Section 6.1.1. The registry is partitioned into three ranges that determine both the registration policy and the framing class of the payload:
 
 | Range | Framing Class | Registration Policy |
 |-------|---------------|---------------------|
@@ -45,14 +45,14 @@ Each registration consists of a value, a frame type name, the minimum protocol l
 | 0x55 | BARRIER | 1 | Subtree synchronization | Section 6.4 |
 | 0x56 | GOAWAY | 0 | Graceful shutdown signal | Section 6.5 |
 | 0x80 | CAPABILITIES | 0 | Negotiated limits/layers | Section 3.4 |
-| 0x81 | CHECKPOINT | 0 | Global synchronization | Section 9.3 |
+| 0x81 | CHECKPOINT | 0 | Scoped completion barrier | Section 9.3 |
 | 0x82 | CLAIM_REDEMPTION | 2 | Durable claim request or acknowledgement | Section 6.7.1 |
 | 0x83 | WORK_SET | 1 | Negotiated declaration and immutable seal | Section 9.8 |
 | 0x84 | RECOVERY | 2 | Authenticated request and retained acceptance receipt | Section 10.6.5 |
 
 ### Unknown Frame Handling
 
-Receivers that encounter a frame type that they do not recognize MUST skip the frame by reading and discarding the number of octets indicated by the 4-octet length prefix. This mechanism ensures that future protocol extensions can be introduced without breaking backward compatibility for older implementations.
+Receivers that encounter a frame type that they do not recognize MUST skip the frame by reading and discarding the number of octets indicated by the 4-octet length prefix. The 4-octet UCF Length prefix (Section 6.1.1) makes skipping possible even for unrecognized fixed-layout types. This mechanism ensures that future protocol extensions can be introduced without breaking backward compatibility for older implementations.
 
 ## PipeStream Status Code Registry
 
@@ -73,6 +73,10 @@ IANA is requested to create the "PipeStream Status Codes" registry. Status codes
 | 0xA | RETRYING | 2 | Retry in progress |
 | 0xB | SKIPPED | 2 | Intentionally skipped |
 | 0xC | ABANDONED | 2 | Timed out |
+
+An unknown status code has no defined state transition; absent a
+negotiated extension defining it, the receiver MUST reject it with
+PIPESTREAM_ENTITY_INVALID (0x05).
 
 ## PipeStream Error Code Registry
 
@@ -103,8 +107,9 @@ PipeStream error codes are used as QUIC application error codes in CONNECTION_CL
 | 0x40-0xFF | Private Use | Requires explicit agreement |
 
 The registry has an 8-bit value space. QUIC application error codes have
-a larger space; values above 0xFF are reserved by this mapping and MUST
-NOT be emitted without a future specification. An unrecognized error
+a larger space; under the version-1 mapping (ALPN "pipestream/1"), values
+above 0xFF are reserved and MUST NOT be emitted without a future
+specification. An unrecognized error
 code still terminates the affected connection or stream; it MUST NOT
 be interpreted as success.
 
@@ -128,7 +133,7 @@ Scheme name:
 :   pipestream
 
 Status:
-:   Permanent
+:   Provisional
 
 Applications/protocols that use this scheme:
 :   PipeStream protocol (this document)
@@ -243,19 +248,17 @@ Values 0x00-0xBF use Specification Required. Values 0xC0-0xFF are Private Use.
 
 | Value | Name | Reference |
 |-------|------|-----------|
-| 0x00 | UNSPECIFIED | Section 6.6.2 |
-| 0x01 | EXTERNAL_CALL | Section 6.6.2 |
-| 0x02 | RATE_LIMITED | Section 6.6.2 |
-| 0x03 | AWAITING_SIBLING | Section 6.6.2 |
-| 0x04 | AWAITING_APPROVAL | Section 6.6.2 |
-| 0x05 | RESOURCE_BUSY | Section 6.6.2 |
+| 0x00 | UNSPECIFIED | Section 6.6.2.1 |
+| 0x01 | EXTERNAL_CALL | Section 6.6.2.1 |
+| 0x02 | RATE_LIMITED | Section 6.6.2.1 |
+| 0x03 | AWAITING_SIBLING | Section 6.6.2.1 |
+| 0x04 | AWAITING_APPROVAL | Section 6.6.2.1 |
+| 0x05 | RESOURCE_BUSY | Section 6.6.2.1 |
 | 0x06-0xBF | Unassigned | |
 | 0xC0-0xFF | Private Use | |
 
 An unknown yield reason does not change the YIELDED lifecycle state or
-authorize automatic retries. An unknown status code has no defined
-state transition; absent a negotiated extension defining it, the receiver
-MUST reject it with PIPESTREAM_ENTITY_INVALID (0x05).
+authorize automatic retries.
 
 ## Extension Identifier Registry
 
@@ -268,7 +271,7 @@ revision requires a new identifier; an identifier is not a version range.
 |-------|-----|---------------------|
 | 0 | Reserved | Not assignable |
 | 1-65279 | Unassigned | Specification Required |
-| 65280-65534 | Private Use | Explicit agreement |
+| 65280-65534 | Private Use | Explicit agreement (Private Use per RFC 8126; no IANA action) |
 | 65535 | Reserved | Not assignable |
 
 Registrations include an identifier, name, contact, permanent specification,

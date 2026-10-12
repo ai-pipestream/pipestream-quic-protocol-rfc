@@ -1,8 +1,8 @@
 # Rehydration Semantics
 
 Section 9.8 defines an opt-in sealed-work profile that replaces the
-recycling, checkpoint-cut, and GOAWAY rules for its sessions. Other
-connections continue to use Sections 9.1 through 9.7.
+recycling, checkpoint-cut, and GOAWAY rules for its sessions. Sessions
+not using this profile continue to use Sections 9.1 through 9.7.
 
 ## Entity ID Lifecycle and Cursor
 
@@ -24,9 +24,9 @@ The ID space is divided into three logical regions relative to the current `curs
 | In-flight | `cursor` to `last_assigned` | Active entities (PENDING, PROCESSING, etc.) |
 | Free | Beyond `last_assigned` | Available for new entity assignment |
 
-The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If `window_size >= max_window`, the sender MUST apply backpressure and stop assigning new IDs until the cursor advances.
+The window size is computed as `(last_assigned - cursor) mod 0xFFFFFFFD`. If the window size equals or exceeds `max_window` (the negotiated `max-window-size` capability, Section 3.4), the sender MUST apply backpressure and stop assigning new IDs until the cursor advances.
 
-The `max_window` value MUST NOT exceed 2,147,483,646 (the largest value strictly less than 0xFFFFFFFD / 2). This bound guarantees that the circular comparison function `is_before` (Section 9.3) is unambiguous for any pair of in-flight Entity IDs. The default `max-window-size` advertised in the capabilities exchange (Section 3.4) is 2,147,483,646.
+The negotiated `max-window-size` value MUST NOT exceed 2,147,483,646 (the largest value strictly less than 0xFFFFFFFD / 2). This bound guarantees that the circular comparison function `is_before` (Section 9.3) is unambiguous for any pair of in-flight Entity IDs. The default `max-window-size` advertised in the capabilities exchange (Section 3.4) is 2,147,483,646. A sender that assigns new IDs beyond the negotiated `max-window-size` is in error; the error code registered for this condition is PIPESTREAM_WINDOW_EXCEEDED (0x08).
 
 **Rules:**
 
@@ -36,7 +36,7 @@ The `max_window` value MUST NOT exceed 2,147,483,646 (the largest value strictly
 4. On reaching a terminal state (COMPLETE, SKIPPED, ABANDONED, or FAILED with no remaining retries): mark resolved; if `entity_id == cursor`, advance cursor past all contiguous resolved IDs
 5. IDs behind cursor are implicitly recyclable
 
-An entity in the FAILED state that may still transition to RETRYING (see the state transition table in Section 6.2) MUST NOT be marked resolved. Only when retries are exhausted or no completion policy permits retries does FAILED become terminal for cursor purposes.
+An entity in the FAILED state that may still transition to RETRYING (see the state transition table in Section 6.2.3) MUST NOT be marked resolved. Only when retries are exhausted or no completion policy permits retries does FAILED become terminal for cursor purposes.
 
 ## Assembly Manifest
 
@@ -130,7 +130,7 @@ For circular comparison in Condition 1, implementations MUST use the same modulo
 
 `is_before(a, b) = (a != b) && (((b - a + MAX) % MAX) < (MAX / 2))`
 
-An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
+The is_before function is the circular comparison used throughout this document for cursor and identifier ordering. An entity ID `a` is considered "less than checkpoint_entity_id `b`" iff `is_before(a, b)` is true.
 
 ## Scope ID Allocation (Layer 1)
 
@@ -175,24 +175,18 @@ Because each Entity ID contributes exactly one leaf, an implementation MUST NOT 
 
 ## Rehydration Readiness Tracking
 
-Implementations MUST track Assembly Manifest resolution order using a local data structure that can efficiently identify the next parent entity eligible for rehydration as child statuses arrive out of order.
+Endpoints track Assembly Manifest resolution order so that the next parent entity eligible for rehydration can be identified as child statuses arrive out of order.
 
 The specific algorithm and internal representation are implementation choices and are outside the scope of this specification.
 
 ## Stopping Point Validation (Layer 2)
 
-When yielding or deferring, include validation:
-
-~~~~ cddl
-stopping-point-validation = {
-  ? state-checksum: bstr,        ; Hash of processing state
-  ? bytes-processed: uint,       ; Progress marker
-  ? children-complete: uint,
-  ? children-total: uint,
-  ? is-resumable: bool,
-  ? checkpoint-ref: tstr,
-}
-~~~~
+When yielding or deferring, include validation. A receiver MUST verify
+`state-checksum` when present; resumption without a `state-checksum` is
+permitted only when the negotiated lifecycle or application profile
+explicitly allows it, and MUST otherwise be rejected with
+PIPESTREAM_INTEGRITY_ERROR (0x04). The `stopping-point-validation` type
+is defined in Section 6.8.2; the authoritative definition is Appendix C.
 
 ## Sealed Work Sets (Private-Use Profile)
 
@@ -217,8 +211,8 @@ work origination. Those require separately specified contracts.
 ### Identity and Scope Ownership
 
 The first WORK_SET request declares root scope 0, sequence 0, and a
-nonzero 16-octet `producer-id`. The `session-id` uses the bounded ASCII
-syntax in Section 11.6.1. The receiver MUST persist this producer binding
+nonzero 16-octet `producer-id`. The `session-id` MUST match the
+`session-id` production of Section 11.6.1. The receiver MUST persist this producer binding
 with the session. Every subsequent declaration on the connection MUST
 have the same session and producer. EntityHeaders inherit the binding;
 any explicit session metadata MUST agree with it.
@@ -270,7 +264,7 @@ increasing, both within a batch and across batches. A batch contains at most
 256 IDs. An empty batch is permitted only with SEAL and only if previous
 batches declared at least one ID. A scope cannot seal an empty work set.
 The receiver enforces the negotiated per-scope entity limit and MAY enforce
-a lower aggregate local resource budget with PIPESTREAM_LIMIT_EXCEEDED.
+a lower aggregate local resource budget with PIPESTREAM_LIMIT_EXCEEDED (0x06).
 
 The producer MAY send payloads and further batches while a scope remains
 unsealed, but MUST wait for the exact declaration ACK covering an entity
@@ -311,7 +305,8 @@ The seal is SHA-256 over the concatenation below. Integers are unsigned
 big-endian; the domain string is ASCII without a terminator. This encoding
 is independent of CBOR optional-member omission and batch boundaries.
 
-1. `pipestream-work-set-v1`.
+1. The 22-octet ASCII domain separation string `pipestream-work-set-v1`,
+   with no terminator and no trailing punctuation.
 2. Two-octet session ID length, followed by the session ID's ASCII octets.
 3. Sixteen-octet producer ID, then four-octet scope ID.
 4. One octet: 0 for no parent, 1 for a parent. If 1, append the parent's
@@ -343,7 +338,8 @@ exclusive bound. A request may arrive before the seal or final payload;
 the originator's admission-before-request rule in Section 9.3 does not
 apply to this profile. The request remains pending under that section's
 connection-local deadline. Once the
-scope is ready, a wrong bound is PIPESTREAM_ENTITY_INVALID. ACK additionally
+scope is ready, a `checkpoint-entity-id` that does not equal the inclusive
+largest declared ID is PIPESTREAM_ENTITY_INVALID (0x05). ACK additionally
 requires the existing manifest and nested-checkpoint conditions. Each ACK
 is therefore a scope-qualified completion cursor over a fixed set. STATUS
 cursor updates and ID recycling MUST NOT be used in this profile.
