@@ -58,8 +58,8 @@ PipeStream uses a dual-plane architecture within a single QUIC connection. The e
 
 A PipeStream connection follows this lifecycle:
 
-1. **Establishment:** Client initiates QUIC connection with ALPN identifier "pipestream/1"
-2. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream
+1. **Establishment:** Client initiates QUIC connection with ALPN identifier "pipestream/1" (Section 11.1)
+2. **Control Stream Initialization:** Client opens Stream 0 as bidirectional Control Stream (Section 5.1)
 3. **Capability Exchange:** Client and server exchange supported protocol layers and limits on Stream 0
 4. **Entity Streaming:** Entities are transmitted per Sections 5 and 6
 5. **Termination:** Connection closes via GOAWAY-initiated graceful shutdown (Section 6.5) or QUIC CONNECTION_CLOSE

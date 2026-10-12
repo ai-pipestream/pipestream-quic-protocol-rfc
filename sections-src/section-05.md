@@ -21,7 +21,7 @@ The Control Stream MUST use QUIC Stream ID 0, which per RFC 9000 is a bidirectio
 
 The Control Stream carries small, bit-packed control frames. STATUS frame payloads are 16 octets base (21 octets on wire including the 5-octet UCF header). Implementations MUST ensure adequate flow control credits:
 
-- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets. A lower value is permissible for extremely constrained devices but risks stalling status delivery.
+- The initial MAX_STREAM_DATA for Stream 0 SHOULD be at least 8192 octets. A lower value is permitted for extremely constrained devices but risks stalling status delivery.
 - Implementations SHOULD NOT block Entity Stream transmission due to Control Stream flow control exhaustion. In rare cases where strict ordering between control and data planes is required by the application, an implementation MAY temporarily pause entity transmission until control stream credits are replenished.
 
 ### Heartbeat Mechanism
@@ -35,13 +35,14 @@ PipeStream heartbeat frames are OPTIONAL and are intended for application-level 
 | Type | 0x50 (STATUS) | |
 | Length | 16 | STATUS payload length with no cursor or extension |
 | Stat | 0x0 (UNSPECIFIED) | Heartbeat signal |
+| Flags word | 0 | E=0, C=0, D=0; see Section 6.2.5 |
 | Entity ID | 0xFFFFFFFF | CONNECTION_LEVEL |
 | Scope ID | 0x00000000 | Root scope |
 | Reserved | 0x00000000 | MUST be zero |
 
 The KEEPALIVE_TIMEOUT defaults to 30 seconds. Endpoints MAY negotiate a different value by including a `keepalive-timeout-ms` field (in milliseconds) in the capabilities exchange (Section 3.4); the effective timeout is the minimum of the two peers' advertised values.
 
-When no status updates have been transmitted for KEEPALIVE_TIMEOUT, an endpoint MAY send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the endpoint SHOULD first apply transport-native liveness policy (e.g., QUIC PING); it MAY close the connection with PIPESTREAM_IDLE_TIMEOUT (0x02) when application-level inactivity policy requires it.
+When no status updates have been transmitted for KEEPALIVE_TIMEOUT, an endpoint MAY send a heartbeat frame. If no data is received on Stream 0 for 3 * KEEPALIVE_TIMEOUT, the endpoint SHOULD first apply transport-native liveness policy (e.g., QUIC PING); it MAY close the connection with PIPESTREAM_IDLE_TIMEOUT (0x02) when application-level inactivity policy requires it. The decision to close an idle connection is application policy; this document does not mandate closure.
 
 A valid heartbeat does not change entity state, advance the cursor, or require a response. A receiver MUST continue parsing subsequent control frames normally.
 
@@ -82,11 +83,14 @@ Each Entity Stream carries exactly one Entity Frame (Section 6.8): a Header Leng
 4. A receiver that no longer requires an entity MAY send STOP_SENDING on the corresponding Entity Stream.
 5. Additional data received on an Entity Stream after a complete Entity Frame MUST be treated as a stream error of type PIPESTREAM_FRAME_ERROR (0x0D).
 
+When the EntityHeader carries a payload-length, rule 2 applies; rule 5
+applies when the payload length is inferred from FIN.
+
 ## Prohibition of 0-RTT Early Data
 
 QUIC permits applications to send data in 0-RTT early data before the TLS handshake completes; such data is replayable by an attacker. PipeStream capability negotiation establishes per-connection state whose replay could alter negotiated limits or serialization formats.
 
-Endpoints MUST NOT send PipeStream frames in 0-RTT early data, and a server MUST NOT process PipeStream frames received in early data before the QUIC handshake is confirmed. A future extension may define 0-RTT semantics along with the required replay protections.
+Endpoints MUST NOT send PipeStream frames in 0-RTT early data, and a server MUST NOT process PipeStream frames received in early data before the QUIC handshake is confirmed; Section 3 of {{RFC9308}} discusses the underlying 0-RTT replay considerations. A future extension may define 0-RTT semantics along with the required replay protections.
 
 ## Performance Considerations
 
@@ -107,6 +111,6 @@ Implementations SHOULD assign the Control Stream (Stream 0) a higher priority th
 Transport observations and authoritative work outcomes are distinct. A reset or lost connection can occur after work committed but before its report arrived. Endpoints MUST NOT infer a terminal work outcome, advance a completion cursor, or authorize re-execution solely from such an observation.
 
 1. On `RESET_STREAM` or `STOP_SENDING`, discard incomplete receive buffers as appropriate, but retain declared obligations and already admitted durable state. Only the processing authority may report a lifecycle transition, and only when permitted by the negotiated state machine and completion policy. A transport abort is not an application cancellation command.
-2. If the processing authority determines an entity error (for example, checksum failure), it SHOULD abort the affected Entity Stream and report the applicable PipeStream error or authorized lifecycle transition on Stream 0 when usable. An invalid or unadmitted declared payload remains outstanding under Section 9.8; a stream error cannot manufacture its resolution.
+2. If the processing authority determines an entity error (for example, checksum failure), it SHOULD abort the affected Entity Stream and report the applicable PipeStream error or authorized lifecycle transition on Stream 0 when usable. A declared or admitted payload remains outstanding under the negotiated lifecycle (Section 9.8 states the rule for the sealed lifecycle); a stream error cannot manufacture its resolution.
 3. If Stream 0 is reset or becomes unusable, endpoints MUST close the connection with `PIPESTREAM_CONTROL_RESET (0x03)`. Any supported reconnect establishes a separate connection and revalidates authentication and negotiated lifecycle; it does not repair the unusable Control Stream.
 4. On connection termination, preserve previously validated terminal observations. Other outcomes remain locally unknown unless the negotiated lifecycle provides authoritative evidence. "Unknown" is a local observation, not a new wire status. Recovery follows that lifecycle's retained-state rules, not an implicit `FAILED` or `ABANDONED` transition.

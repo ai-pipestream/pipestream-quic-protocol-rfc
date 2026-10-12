@@ -15,7 +15,10 @@ Layer 0 provides the fundamental streaming capabilities:
 - Single-level dehydrate/rehydrate
 - Checkpoint blocking
 
-All implementations MUST support Layer 0.
+All version-1 implementations MUST support Layer 0. At Layer 0, all
+constituent Entities of a composite Entity MUST resolve successfully
+before rehydration; Completion Policies (Section 2.4, Layer 2) relax
+this requirement.
 
 ## Layer 1: Recursive Extension
 
@@ -50,7 +53,8 @@ During CONNECT (the connection-establishment phase: the QUIC handshake and
 this initial exchange, Section 8), endpoints exchange supported capabilities
 using the `capabilities` structure. The CAPABILITIES frame (type 0x80,
 Section 6.1) carries exactly one such structure, a CBOR map; this document
-calls it the Capabilities message. This message MUST be encoded using the default CBOR format for both the client's initiation and the server's response (Section 3.4.2).
+calls it the Capabilities message. The encoding of this message is
+specified in Section 3.4.2.
 
 ~~~~ cddl
 serialization-format = uint .le 255
@@ -58,25 +62,27 @@ serialization-format = uint .le 255
                        ; Formats registry (Section 11.5).
                        ; This document defines only CBOR (0).
 
+extension-id = 1..65534
+extension-list = [0*32 extension-id]
+
 capabilities = {
-  layer0-core: bool,               ; MUST be true
-  layer1-recursive: bool,          ; Scoped IDs, digests
-  layer2-resilience: bool,         ; Yield, claim checks
-  ? max-scope-depth: uint .le 7,   ; Default: 7 (8 levels, 0-7)
-  ? max-entities-per-scope: uint,  ; Default: 4,294,967,292
-                                   ; (Section 9.1)
-  ? max-window-size: uint,         ; Default: 2,147,483,646
-                                   ; (Max in-flight entities;
-                                   ; see Section 9.1)
-  ? serialization-format: serialization-format, ; Default: CBOR
-  ? keepalive-timeout-ms: uint,    ; Default: 30000 (30s)
+  layer0-core: bool,              ; MUST be true
+  layer1-recursive: bool,
+  layer2-resilience: bool,
+  ? max-scope-depth: uint .le 7,  ; Default: 7
+  ? max-entities-per-scope: uint .le 4294967292,
+                                  ; Default: 4,294,967,292
+  ? max-window-size: uint .le 2147483646,
+                                  ; Default: 2,147,483,646
+                                  ; (Section 9.1)
+  ? serialization-format: serialization-format,
+  ? keepalive-timeout-ms: uint,   ; Default: 30000 (30s)
   ? supported-extensions: extension-list, ; Default: []
   ? required-extensions: extension-list,  ; Default: []
 }
-
-extension-id = 1..65534
-extension-list = [0*32 extension-id]
 ~~~~
+
+The authoritative definition is Appendix C.
 
 Peers negotiate down to common capabilities. If Layer 2 is requested but Layer 1 is not supported, Layer 2 MUST be disabled.
 
@@ -89,11 +95,11 @@ MUST NOT advertise values exceeding those bounds.
 
 ### Version Negotiation
 
-PipeStream protocol versioning is carried in two places: the ALPN identifier and the Ver field in the STATUS frame (Section 6.2.1). The ALPN identifier `pipestream/1` identifies the major protocol version and the QUIC transport mapping defined in this document. The 4-bit Ver field in STATUS frames carries the value 0x1 for this specification.
+PipeStream protocol versioning is carried in two places: the ALPN identifier and the Ver field in the STATUS frame (Section 6.2.1). The ALPN identifier "pipestream/1" (Section 11.1) identifies the major protocol version and the QUIC transport mapping defined in this document. The 4-bit Ver field in STATUS frames carries the value 0x1 for this specification.
 
-A future major version of PipeStream (e.g., `pipestream/2`) would register a new ALPN identifier. QUIC's native ALPN negotiation during the TLS handshake provides version selection: if a client offers both `pipestream/2` and `pipestream/1` and the server supports only `pipestream/1`, the TLS handshake selects `pipestream/1` without additional round trips. This mechanism is consistent with the versioning approach used by HTTP/3 {{RFC9114}} and DNS over QUIC {{RFC9250}}.
+A future major version of PipeStream (e.g., "pipestream/2") would register a new ALPN identifier. QUIC's native ALPN negotiation during the TLS handshake provides version selection: if a client offers both "pipestream/2" and "pipestream/1" and the server supports only "pipestream/1", the TLS handshake selects "pipestream/1" without additional round trips. This mechanism is consistent with the versioning approach used by HTTP/3 {{RFC9114}} and DNS over QUIC {{RFC9250}}.
 
-Minor, backward-compatible extensions do not require a new ALPN identifier. Such extensions use newly registered frame or status values and explicit capability negotiation as specified by the extension. The maps defined by this document are closed: an endpoint that receives an unrecognized map member before negotiating an extension that defines it MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D). An extension therefore cannot add an optional member to a core map without also defining how support for that member is negotiated.
+Minor, backward-compatible extensions do not require a new ALPN identifier. Such extensions use newly registered frame or status values and explicit capability negotiation as specified by the extension. The maps defined by this document are closed: an endpoint that receives an unrecognized map member before negotiating an extension that defines it MUST close the connection with PIPESTREAM_FRAME_ERROR (0x0D). Unknown frame types are handled as specified in Section 11.2.1. An extension therefore cannot add an optional member to a core map without also defining how support for that member is negotiated.
 
 The initial CAPABILITIES map remains closed even when extensions are
 offered. Extension-specific members MUST NOT appear in this exchange.
@@ -104,9 +110,9 @@ parameters use messages defined by the activated extension after CONNECT.
 
 The serialization_format field determines the encoding used for all variable-length control messages (frame types 0x80-0xFF) and entity headers.
 
-This document defines a single serialization format: CBOR {{RFC8949}}, value 0 in the PipeStream Serialization Formats registry (Section 11.5). All PipeStream implementations MUST support CBOR. Every CBOR message MUST use the deterministic encoding requirements of Section 4.2 of {{RFC8949}}: definite-length items, the shortest form for integers and lengths, and deterministic map-key ordering. A receiver MUST reject a non-deterministically encoded PipeStream CBOR message with PIPESTREAM_FRAME_ERROR (0x0D). This gives every message one golden byte representation and makes conformance results independent of a library's default encoder settings.
+This document defines a single serialization format: CBOR {{RFC8949}}, value 0 in the PipeStream Serialization Formats registry (Section 11.5). All PipeStream implementations MUST support CBOR. Every CBOR message MUST use the deterministic encoding requirements of Section 4.2 of {{RFC8949}}: definite-length items, the shortest form for integers and lengths, and deterministic map-key ordering. A receiver MUST reject a non-deterministically encoded PipeStream CBOR message with PIPESTREAM_FRAME_ERROR (0x0D). This gives every message a single canonical byte representation and makes conformance results independent of a library's default encoder settings.
 
-The `serialization-format` capability field and its registry exist to permit future specifications to define additional formats; any such specification MUST normatively define the encoding of every serialized message in this document.
+The `serialization-format` capability field and its registry exist to permit future specifications to define additional formats; any such specification MUST normatively define the encoding of every serialized message defined by that specification.
 
 Determinism applies to the map actually transmitted, before defaults are
 applied. Omission of an optional member and explicit transmission of its
@@ -114,7 +120,7 @@ default value are both valid, distinct maps. Receivers MUST NOT reject an
 omitted optional member because re-encoding a default-filled object would
 insert that member. Duplicate map keys, non-minimal integers or lengths,
 indefinite-length items, and trailing CBOR items are invalid. Floating-point
-values follow the shortest exact representation rule in Section 8.4.
+values follow the shortest exact representation rule in Section 8.4 of this document.
 
 Negotiation proceeds as follows:
 

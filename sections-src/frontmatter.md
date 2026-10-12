@@ -18,7 +18,6 @@ keyword:
  - consistency
 venue:
   group: Individual
-  mail: kristian.rickert@pipestream.ai
 
 author:
  -
@@ -60,6 +59,17 @@ informative:
     date: 2026-03
     target: https://github.com/ai-pipestream/pipestream-quic-protocol-rfc/tree/main/docproc
   RFC9114:
+  RFC9297:
+    title: "HTTP Datagrams and the Capsule Protocol"
+    author:
+      - ins: "D. Schinazi"
+        name: "David Schinazi"
+      - ins: "L. Pardue"
+        name: "Lucas Pardue"
+    date: 2022-08
+    seriesinfo:
+      RFC: "9297"
+    target: https://www.rfc-editor.org/rfc/rfc9297
   WEBTRANSPORT: I-D.ietf-webtrans-http3
   RFC9308:
     title: "Applicability of the QUIC Transport Protocol"
@@ -75,13 +85,4 @@ informative:
   RFC9250:
   RFC7696:
   MOQT: I-D.ietf-moq-transport
-  scatter-gather:
-    title: "The Scatter-Gather Design Pattern"
-    author:
-      - ins: "D. Lea"
-        name: "Doug Lea"
-    date: 1996
-    seriesinfo:
-      DOI: 10.1007/978-1-4612-1260-6
-
 --- abstract
