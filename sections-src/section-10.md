@@ -5,8 +5,7 @@
 PipeStream uses the QUIC transport {{RFC9000}} and QUIC TLS mapping
 {{RFC9001}}, with TLS 1.3 {{RFC9846}}. Implementations MUST follow the
 QUIC TLS mapping, including ALPN and peer authentication. Implementations
-MUST NOT provide mechanisms to disable encryption. TLS is not a separate
-record-layer wrapper around UDP datagrams.
+MUST NOT provide mechanisms to disable encryption.
 
 A client MUST validate the server's certificate chain and verify its service
 identity under {{RFC9525}} before sending any PipeStream application frame.
@@ -40,7 +39,7 @@ An application unable to roll back speculative processing MUST wait for validati
 
 This specification mandates SHA-256 {{FIPS-180-4}} as the sole checksum algorithm for both payload integrity (this section) and Merkle tree construction (Section 9.5). SHA-256 is well-studied and widely deployed; however, future developments may necessitate migration to a different algorithm.
 
-PipeStream supports algorithm migration through the capability negotiation mechanism (Section 3.4). A future specification MAY define additional fields in the `capabilities` structure to advertise supported checksum algorithms, following the general principles outlined in {{RFC7696}}. Until such negotiation is defined, all implementations MUST use SHA-256 when producing or verifying checksums. An implementation that receives a checksum of a length other than 32 octets MUST reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04).
+PipeStream supports algorithm migration through the capability negotiation mechanism (Section 3.4). A future specification MAY define additional fields in the `capabilities` structure to advertise supported checksum algorithms, following the general principles outlined in {{RFC7696}}. Until such negotiation is defined, all implementations MUST use SHA-256 when producing or verifying checksums. An implementation that receives a checksum of a length other than 32 octets MUST reject the entity with PIPESTREAM_INTEGRITY_ERROR (0x04). A well-formed message whose checksum member is present but not 32 octets is rejected with PIPESTREAM_INTEGRITY_ERROR (0x04); a malformed encoding is rejected under Section 3.4.2.
 
 The `checksum` field in the EntityHeader is typed as `bstr .size 32` in the CDDL schema (Appendix C). A future algorithm negotiation extension would need to update this constraint, the SCOPE_DIGEST Merkle root size, and the corresponding IANA registry entries.
 
@@ -54,7 +53,7 @@ The `checksum` field in the EntityHeader is typed as `bstr .size 32` in the CDDL
 | Checkpoint timeout | 30s | Prevents stuck state |
 | Claim check expiry | 86400s | Garbage collection |
 
-Implementations MUST enforce all resource limits listed above. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
+Implementations MUST enforce the negotiated limits (Section 3.4); the entity-count and window defaults listed above are identifier-space bounds, not memory guidance. Exceeding any limit MUST result in the corresponding error code (see Section 11.4). Implementations SHOULD allow operators to configure stricter limits than the defaults shown here.
 
 Durable implementations MUST account for retained protocol state, not only
 unfinished work. Completion, refusal, revocation, or connection loss MUST NOT
@@ -109,9 +108,9 @@ clock indefinitely behind a storage operation.
 
 A single dehydration operation can produce an arbitrary number of child entities from a small input, creating a potential amplification vector. To mitigate this:
 
-1. Implementations MUST enforce the max_entities_per_scope limit negotiated during capability exchange (Section 3.4). Any dehydration that would exceed this limit MUST be rejected.
+1. Implementations MUST enforce the `max-entities-per-scope` limit negotiated during capability exchange (Section 3.4). Any dehydration that would exceed this limit MUST be rejected.
 
-2. Implementations MUST enforce the max_scope_depth limit. A dehydration chain deeper than this limit MUST be rejected with PIPESTREAM_DEPTH_EXCEEDED (0x07).
+2. Implementations MUST enforce the `max-scope-depth` limit. A dehydration chain deeper than this limit MUST be rejected with PIPESTREAM_DEPTH_EXCEEDED (0x07).
 
 3. Implementations SHOULD enforce a configurable ratio between input entity size and total child entity count. A recommended default is no more than 1,000 children per megabyte of parent payload.
 
@@ -265,9 +264,10 @@ by both endpoints in the capability exchange and specified completely here.
 Both endpoints MUST require this extension
 and `authenticated-session-v1` (65282). It requires Layer 2 and excludes the
 sealed-work profile. An incompatible selection MUST fail CONNECT with
-PIPESTREAM_EXTENSION_UNSUPPORTED; a client MUST reject an invalid response.
-No anonymous or legacy-redemption fallback is permitted. These values are
-draft identifiers, not IANA assignments.
+PIPESTREAM_EXTENSION_UNSUPPORTED; a client MUST reject an invalid response
+with PIPESTREAM_FRAME_ERROR (0x0D). No anonymous or legacy-redemption
+fallback is permitted. These values are draft identifiers, not IANA
+assignments.
 
 RECOVERY uses UCF type 0x84 and the `recovery-frame` schema in Appendix C.
 A request has flags 0 and contains an authority, session ID, nonzero
