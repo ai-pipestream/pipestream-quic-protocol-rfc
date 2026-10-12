@@ -226,10 +226,9 @@ fn verify_vector_index(root: &Path) -> Result<()> {
 fn validate_cddl(root: &Path) -> Result<()> {
     let bundle = executable(&["bundle", "bundle3.3"])?;
     let schema = root.join("cddl/pipestream-layer0.cddl");
-    schema::synchronized(
-        &fs::read_to_string(&schema)?,
-        &fs::read_to_string(root.join("sections-src/appendix-c.md"))?,
-    )?;
+    let appendix = fs::read_to_string(root.join("sections-src/appendix-c.md"))?;
+    schema::synchronized(&fs::read_to_string(&schema)?, &appendix)?;
+    schema::inline_copies_synchronized(&appendix, &schema::section_sources(root)?)?;
     run_checked_owned(
         root,
         &[
