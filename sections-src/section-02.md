@@ -16,10 +16,10 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   The distributed processing pattern implemented by PipeStream. A single input is "scattered" (dehydrated) into multiple parts for parallel processing, and the results are "gathered" (rehydrated) back into a single output. PipeStream extends classical scatter-gather with recursive nesting: any scattered part may itself be scattered further.
 
 **Dehydrate (Scatter)**
-:   The operation of decomposing an Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node MUST create an Assembly Manifest entry recording the identifiers of all resulting sub-entities. The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration transitions data from a solid state (a single complete unit) to a fluid state (multiple in-flight entities).
+:   The operation of decomposing an Entity into multiple constituent Entities for parallel or distributed processing. When an Entity is dehydrated, the originating node creates an Assembly Manifest entry recording the identifiers of all resulting sub-entities (see Section 9.2). The dehydration operation is recursive; a sub-entity produced by dehydration MAY itself be dehydrated, creating a tree of decomposition. Dehydration transitions data from a solid state (a single complete unit) to a fluid state (multiple in-flight entities).
 
 **Rehydrate (Gather)**
-:   The operation of reassembling multiple Entities back into a single composite Entity. A rehydrate operation MUST NOT proceed until all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy). Rehydration transitions data from a fluid state back to a solid state.
+:   The operation of reassembling multiple Entities back into a single composite Entity. A rehydrate operation proceeds only after all constituent Entities listed in the corresponding Assembly Manifest entry have been received and processed (or handled according to the Completion Policy; see Section 9.3). Rehydration transitions data from a fluid state back to a solid state.
 
 **Solid State**
 :   An Entity that exists as a complete, stored unit or as a single root Entity entering or exiting a pipeline. Contrast with "fluid state".
@@ -53,7 +53,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 :   A detached reference to a deferred Entity that can be queried or resumed independently, potentially in a different session. Claim checks enable asynchronous processing patterns and retry queues.
 
 **Completion Policy**
-:   A configuration specifying how to handle partial failures during dehydration. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio).
+:   A configuration specifying how to handle partial failures during dehydration. Policies include STRICT (all must succeed), LENIENT (continue with partial results), BEST_EFFORT (complete with whatever succeeds), and QUORUM (require minimum success ratio (Section 8.4)).
 
 ## Data Representation
 

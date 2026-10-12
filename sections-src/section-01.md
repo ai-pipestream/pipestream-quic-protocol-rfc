@@ -7,7 +7,7 @@ process those children independently, and combine their results. When stages
 belong to different operators, their coordination interfaces must agree on
 identity, completion, failure, and resumption, in addition to moving bytes.
 
-PipeStream proposes an application protocol over QUIC for these interactions.
+PipeStream specifies an application protocol over QUIC for these interactions.
 It assigns explicit wire semantics to entity lifecycle statuses, scoped
 completion summaries, checkpoints, and durable continuation references.
 It does not replace application processing logic, a scheduler, or durable
@@ -46,7 +46,7 @@ questions that remain in version 1.
 ## Applicability
 
 Candidate workloads include document enrichment, chunked file processing,
-video processing, and hierarchical work orchestration. Payload meanings,
+media processing, and hierarchical work orchestration. Payload meanings,
 processing authorization, and result validation belong to application
 profiles. The prototypes and tested scenarios are described in Appendix D;
 this document makes no measured performance or deployment-scale claim for
@@ -72,7 +72,9 @@ the state machine alongside its QUIC transport implementation.
 
 ## Design Philosophy
 
-The scatter-gather pattern {{scatter-gather}} provides the organizing model.
+The scatter-gather pattern, in which a single input is decomposed into
+parts that are processed in parallel and their results reassembled,
+provides the organizing model.
 A decomposed root waits for its children to resolve according to its
 completion policy before rehydration. STRICT requires success of every
 child; partial-success policies deliberately have weaker outcomes.
