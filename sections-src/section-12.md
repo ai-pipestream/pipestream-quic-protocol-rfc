@@ -36,9 +36,10 @@ converted implicitly or opened through the version-2 lifecycle.
 Use QUIC version 1 {{RFC9000}} and its TLS mapping {{RFC9001}}, with TLS 1.3,
 ALPN `pipestream/2`, no application 0-RTT, and server identity verification
 under {{RFC9525}}. Connection migration does not change authenticated identity.
-The client opens bidirectional Stream 0 for control. Other bidirectional
-streams are forbidden. Unidirectional streams carry profile-defined input
-or result objects; Core alone defines no application object format.
+The client opens bidirectional Stream 0 for control. An endpoint MUST NOT
+open any other bidirectional stream. Unidirectional streams carry
+profile-defined input or result objects; Core alone defines no application
+object format.
 
 Every control frame is one type octet, a four-octet unsigned big-endian body
 length, then exactly that many body octets. Known bodies are exactly one
@@ -81,8 +82,11 @@ An unsolicited selection, increased limit or other invalid response is a
 FRAME_ERROR. Both peers MUST require every profile needed by resumed work.
 There is one exchange per connection; another CAPABILITIES is a FRAME_ERROR.
 
-`stream-limit` bounds concurrent incoming unidirectional streams in each
-direction; `pending-limit` bounds unresolved requests in each direction;
+`control-limit` bounds the body of a single control frame in either
+direction; a CAPABILITIES body remains bounded by 4096 octets, the minimum
+negotiable value, even when a higher limit is selected. `stream-limit`
+bounds concurrent incoming unidirectional streams in each direction;
+`pending-limit` bounds unresolved requests in each direction;
 `object-limit` bounds the payload of each input or result object. An object
 may be larger than a QUIC flow-control window. Receivers MUST consume
 incrementally and replenish credit without waiting for the entire object.
@@ -214,8 +218,9 @@ This allows independently arriving inputs without a growing application
 request-ID history. All outstanding-request maps remain bounded by the
 negotiated stream and pending limits.
 
-REFUSAL contains the request tag, a named code and at most 512 UTF-8 octets
-of diagnostic text. Diagnostics are not state transitions. A refusal cannot
+REFUSAL contains the request tag, a code from the Section 11.10 registry and
+at most 512 UTF-8 octets of diagnostic text. Diagnostics are not state
+transitions. A refusal cannot
 be a terminal computation outcome unless an authenticated WORK view reports
 that outcome. Codes are: FRAME_ERROR (1), EXTENSION_UNSUPPORTED (2),
 UNAUTHORIZED (3), LIMIT_EXCEEDED (4), NOT_FOUND (5), EXPIRED (6), CONFLICT (7),
@@ -228,10 +233,12 @@ numeric value `0x200 + code`; graceful transport close uses 0.
 
 Malformed control, wrong message direction, negotiation failure, lost control
 framing, and an unusable Control Stream terminate the connection. Use
-CONTROL_RESET when Stream 0 is reset. A valid but refused request returns
-REFUSAL without closing unrelated work. Stream abort uses RESET_STREAM for
-the sender and STOP_SENDING for the receiver, following {{RFC9000}}, Sections
-3.3 and 3.5; a receiver does not send RESET_STREAM for a receive-only stream.
+CONTROL_RESET when Stream 0 is reset: the connection closes with QUIC
+application close code 0x20E (0x200 plus refusal code 14). A valid but
+refused request returns REFUSAL without closing unrelated work. Stream abort
+uses RESET_STREAM for the sender and STOP_SENDING for the receiver, following
+{{RFC9000}}, Sections 3.3 and 3.5; a receiver does not send RESET_STREAM for
+a receive-only stream.
 The server also sends a correlated REFUSAL for an invalid input unless it
 already sent that input's admission response. A client rejecting a result
 aborts reception and reports local delivery failure; it does not send a
@@ -344,7 +351,9 @@ requests creation with that sequence and the exact desired `v2-policy`.
 The authority atomically allocates a monotonically increasing positive session
 generation, increments that owner's creation high-water mark, binds the owner,
 policy and profile set, creates root scope 0, and records the creation receipt.
-Only then does it send SESSION operation 1. It MUST accept the policy exactly
+The creation receipt is the durable binding record, distinct from the
+`v2-operation-receipt` wire type (Appendix F). Only then does it send SESSION
+operation 1. It MUST accept the policy exactly
 or refuse it; lowering a retention promise silently is forbidden.
 
 An identical creation request replays the same receipt and generation.
@@ -372,7 +381,7 @@ cannot use SESSION; they may still send DETACH (Section 12.8), which drains
 and closes the connection and releases nothing, since no session is bound. Mutation requires the durable profile; output access also
 requires the result profile retained by that session.
 
-The session response's `v2-limits` already advertises retained input/output byte
+The session response's `v2-limits` advertises the retained input/output byte
 ceilings and an active-job ceiling, alongside scope, entity and operation
 limits. Clients SHOULD use these values to pace admissions and budget declared
 maximum outputs. They describe ceilings, not currently free capacity or an
@@ -413,7 +422,9 @@ alone is not such proof.
 ## Immutable Operations and Replay
 
 Each mutation has a nonzero 16-octet operation ID, unique within its producer
-and session. The originator persists the ID and complete immutable parameters
+and session. SCOPE and WORK mutations and input admissions carry the operation
+ID; session creation replays by (owner, creation-sequence) and has no wire
+operation ID. The originator persists the ID and complete immutable parameters
 before transmission. A new connection uses a new connection request number
 but the same operation ID and parameters. An operation receipt commits its
 ID, request digest, and exactly one typed outcome from Appendix F.
@@ -539,10 +550,10 @@ remain subject to their own authorization, admission limits and cancellation
 fences. A parent's deadline or FAILED outcome alone MUST NOT revoke that child
 scope or prevent the caller from completing its independent obligations.
 
-Content type and application labels are bounded printable ASCII without
-control characters. The application label identifies an explicitly configured
-versioned processing contract. Unknown application contracts are refused
-APPLICATION_UNSUPPORTED, not processed through an arbitrary fallback.
+Content type and application labels are 1..128 octets of printable ASCII
+without control characters. The application label identifies an explicitly
+configured versioned processing contract. Unknown application contracts are
+refused APPLICATION_UNSUPPORTED, not processed through an arbitrary fallback.
 Input length can be zero; SHA-256 of the empty byte string is still required.
 Invalid FIN geometry, trailing bytes or digest mismatch refuses the input
 with INTEGRITY_ERROR and discards partial reception, not its declaration.
@@ -684,9 +695,10 @@ work. It does not leave unadmitted obligations waiting for a now-unauthorized
 caller. A deadline failure of one work item does not implicitly cancel other
 obligations; the enclosing scope still requires their closure.
 
-WORK operation 4 reads a work view or waits up to 30000 ms for its revision
-to change. Revision starts at 1 on declaration and strictly increases on
-observable durable change. `after-revision` 0 requests an immediate snapshot;
+WORK operation 4 reads a work view or waits up to 30000 ms, the Appendix F
+wait-ms wire maximum, for its revision to change. Revision starts at 1 on
+declaration and strictly increases on observable durable change.
+`after-revision` 0 requests an immediate snapshot;
 a value greater than current revision is CONFLICT. Operation 5 returns a
 consistent current revision/view; a wait timeout returns the unchanged view,
 not failure. Every non-null admission, terminal, child and manifest field
@@ -696,8 +708,9 @@ commitments; transport observations cannot fill missing authoritative fields.
 Every admitted view retains its input descriptor, admitted-at, deadline and
 positive attempt, even when payload bytes later become reclaimable. A branch
 has its child-scope field; a leaf has null. Nonterminal views have null
-terminal-at, receipt-until, output-until and manifest. CANCELLING always has
-admitted input: cancelling or skipping an unadmitted entity settles directly
+terminal-at, receipt-until, output-until and manifest. Nonterminal views other
+than AWAITING_RETRY have null diagnostic. CANCELLING always has admitted
+input: cancelling or skipping an unadmitted entity settles directly
 to CANCELLED or SKIPPED. Terminal
 views have terminal-at and receipt-until; FAILED requires a diagnostic, and
 AWAITING_RETRY requires the current attempt's diagnostic. Inputless CANCELLED
@@ -849,7 +862,9 @@ declared inputs are still missing. Before sealing it is NOT_READY; a different
 seal is INTEGRITY_ERROR. Once ready, operation 5 returns the immutable summary
 with scope, producer, parent, seal, declared count, counters, status root and
 closure time. If its connection-local wait expires first, return WAIT_TIMEOUT,
-not a successful summary. Reconnection begins a new wait against the same set.
+not a successful summary. A WORK view can encode "unchanged" (Section 12.6)
+while a scope summary cannot, so the checkpoint wait reports WAIT_TIMEOUT.
+Reconnection begins a new wait against the same set.
 The wait interval starts when the connection accepts the complete request,
 including time queued for authority storage. A zero wait requests one immediate
 authorized observation: return an already committed summary or WAIT_TIMEOUT.
