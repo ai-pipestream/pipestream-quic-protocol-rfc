@@ -24,7 +24,7 @@ example companion profile that defines such messages.
 ; the CBOR encoding but record the maximum value each
 ; field may carry.
 ;
-;   uint32  values 0..4294967295     (Scope ID)
+;   uint32  values 0..4294967295     (Scope IDs, failure-code)
 ;   entity-id values 1..4294967292   (assignable Entity ID)
 ;   uint64  values 0..2^64-1         (counters, timestamps)
 ;
@@ -227,6 +227,9 @@ entity-status = &(
 ; -----------------------------------------------------------
 ; Assembly Manifest entry
 ; -----------------------------------------------------------
+; The Assembly Manifest is a local data structure (Section 9.2),
+; not a wire message; its plain uints follow that local logical
+; structure rather than the wire aliases above.
 
 assembly-manifest-entry = {
   parent-id: uint,
