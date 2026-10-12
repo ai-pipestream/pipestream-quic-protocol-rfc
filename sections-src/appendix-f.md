@@ -37,11 +37,15 @@ v2-input = [length: v2-number, sha256: v2-digest,
             content-type: v2-label]
 v2-output-budget = [count: 0..256, total-bytes: v2-number]
 v2-state = 0..8
+; code is application-defined; a zero code is not success;
+; detail is explanatory only.
 v2-diagnostic = [code: 0..4294967295, detail: tstr .size (0..512)]
 v2-child-scope = [scope: v2-id, producer: v2-producer]
 v2-counts = [success: v2-number, failure: v2-number,
              cancelled: v2-number, skipped: v2-number]
 
+; control-limit caps the body of one control frame in either direction;
+; a CAPABILITIES body stays bounded by its 4096-octet minimum (Section 12.1).
 v2-capabilities = [
   response: 0..1, supported: v2-extension-list,
   required: v2-extension-list,
@@ -50,6 +54,8 @@ v2-capabilities = [
   stream-idle-ms: 1000..300000, stream-lifetime-ms: 1000..86400000
 ]
 
+; SESSION messages intentionally carry no operation ID; session creation
+; replays by (owner, creation-sequence) (Section 12.3).
 v2-session-message =
     [0, request: v2-id, creation-sequence: v2-id, policy: v2-policy]
   / [1, request: v2-id, authority: v2-label, owner: v2-label,
