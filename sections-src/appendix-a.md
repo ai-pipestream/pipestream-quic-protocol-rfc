@@ -1,4 +1,4 @@
-# Protocol Layer Capability Matrix
+# Protocol Layer Capability Matrix (Informative)
 
 | Feature | Layer 0 | Layer 1 | Layer 2 |
 |---------|---------|---------|---------|
@@ -18,3 +18,6 @@
 | Claim checks | | | X |
 | Completion policies | | | X |
 | SKIPPED/ABANDONED statuses | | | X |
+
+This matrix describes version 1. Version 2 (Section 12) defines no
+layers; it negotiates the profiles in Section 11.10.

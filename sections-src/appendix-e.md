@@ -1,4 +1,4 @@
-# Open Design and Interoperability Issues
+# Open Design and Interoperability Issues (Informative)
 
 **RFC Editor Note:** This appendix is an issue inventory for draft review.
 The issues require resolution before standards-track advancement; remove
@@ -7,11 +7,14 @@ the inventory when its decisions are incorporated into the specification.
 The version-1 limitations below remain relevant to the shipped implementations.
 Section 12 defines a distinct version-2 contract for identity, result delivery,
 retention and profile composition; it does not change version-1 wire meanings.
-Bounded composed failure-model checks now exercise a branch and leaf; remaining
-successor acceptance work includes independent implementations, authenticated
-failure interoperability and the
-equivalent-workload comparison. Normative text alone does not establish those
-properties in a running implementation.
+Bounded composed failure-model checks now exercise a branch and leaf. The
+successor acceptance work this introduction once listed as remaining -
+independent implementations, authenticated failure interoperability and the
+equivalent-workload comparison - is delivered as of 2026-09-21 and is
+recorded in Appendix D. Each item below carries its disposition, following
+the 2026-09-21 record in
+`docs/standards/protocol-review-corrections-2026-09.md`. Normative text
+alone does not establish those properties in a running implementation.
 
 ## Work-Set Closure
 
@@ -25,6 +28,11 @@ lifecycle, including Layer 0 dehydration, still lacks complete-set evidence.
 Independent implementations must validate the profile's lost-ACK, reconnect,
 late-child, missing-payload, and descendant-closure sequences. A general
 bidirectional protocol and explicit cancellation outcomes remain design work.
+
+Disposition as of 2026-10-11: OPEN for version 1. The unsealed lifecycle
+still lacks complete-set evidence, and a general bidirectional protocol
+with explicit cancellation outcomes remains design work. The sealed
+profile's delivered evidence is recorded in Appendix D.
 
 ## Identity and Recycling
 
@@ -42,6 +50,10 @@ It does not allocate namespaces for two independent producers. Profiles
 must not infer that independently allocated numeric IDs are globally unique
 or describe a producer label as authentication.
 
+Disposition as of 2026-10-11: RESOLVED for version 2 by authority-issued
+session generations and disjoint producer namespaces (Section 12).
+Version-1 namespaces and cursor recycling remain as recorded above.
+
 ## Extension Negotiation
 
 Section 3.4.3 now defines bounded supported/required identifier lists,
@@ -49,6 +61,10 @@ activation rules, and refusal of unsupported requirements. The broad
 Layer 2 boolean still needs either complete implementation or
 separately negotiated, precisely named resilience profiles. A private
 README profile is not an interoperable wire capability.
+
+Disposition as of 2026-10-11: OPEN. The broad Layer 2 boolean still needs
+either complete implementation or separately negotiated, precisely named
+resilience profiles.
 
 ## Recovery Outcomes and Authenticated Receipts
 
@@ -65,6 +81,12 @@ result digests, parent identity, policy, and nested receipts. It would also
 need authentication and a threat model. Neither a bare hash nor an
 authenticated worker's assertion proves that computation was correct.
 
+Disposition as of 2026-10-11: DELIVERED. Independent recovery
+implementations exist (Rust's authenticated-recovery profile and the
+independent Java implementation;
+`docs/standards/recovery-execution-java-acceptance.md`), and the broader
+failure-boundary evidence is the neutral acceptance matrix of Appendix D.
+
 ## Evidence Required
 
 Independent implementations should test the clarified sequences against
@@ -73,6 +95,13 @@ lost acknowledgments, slow consumers, authorization failures, and crashes
 at each persistence boundary. A successful one-entity transfer matrix is
 not evidence for those behaviors. Document-format validation does not
 validate distributed semantics.
+
+Disposition as of 2026-10-11: DELIVERED. The neutral acceptance matrix's
+groups G1 through G8 cover the listed categories (reordered streams,
+partial policies, timeouts, lost acknowledgments, slow consumers,
+authorization failures and crashes at persistence boundaries) in both
+client/server directions (Appendix D). The qualifier stands: a successful
+one-entity transfer matrix is not evidence for those behaviors.
 
 ## Result Delivery and Profile Composition
 
@@ -96,6 +125,15 @@ the base sealed extension alone does not negotiate an authentication method.
 Decide whether a successor profile requires a named binding on the wire
 rather than relying on an explicit application profile.
 
+Disposition as of 2026-10-11: RESOLVED for version 2. Section 12 and
+Appendix F define the explicit result contract (output identity,
+integrity, authorization, retention, backpressure and failure semantics),
+and version-2 durable sessions integrate authenticated recovery with a
+named wire binding, which resolves the sealed/recovery composition
+question for version 2. Authenticated profile selection is resolved for
+version 1 by Section 10.6.4 and for version 2 by Section 12.1. Result
+delivery remains a recorded version-1 limitation.
+
 ## Retention and Long-Running Work
 
 The recovery profile fixes receipt retention at 24 hours from admission,
@@ -106,6 +144,11 @@ A successor profile could negotiate bounded retention or promise an interval
 after completion, but would need admission quotas and crash-safe cleanup.
 The current profile's fixed interval must not be silently extended by retry
 or interpreted as cancellation of accepted work.
+
+Disposition as of 2026-10-11: RESOLVED for version 2. Section 12 defines
+retention distinct from receipt replay and accepts the negotiated policy
+exactly as offered (a changed policy is refused, never silently lowered).
+The version-1 recovery profile's fixed 24-hour interval is unchanged.
 
 ## Minimal Core and Completion Summary Semantics
 
@@ -129,3 +172,12 @@ and durability semantics over PipeStream and an RPC-based coordinator,
 measuring coordination code, latency, bytes, and resources rather than
 assuming a transport win. Independent implementer review matters more
 than adding another language that repeats the same unexamined assumptions.
+
+Disposition as of 2026-10-11: the SCOPE_DIGEST count question is ANSWERED
+for the version-2 contract. Appendix F carries an explicit count
+partition (`v2-counts`), and the neutral acceptance matrix verifies those
+commitments byte-exact across languages and storage backends (Appendix D).
+For version 1 the digest remains a status commitment, not an output proof,
+as stated above. The minimal-Core question remains OPEN. The
+utility-evidence ask is delivered (Appendix D;
+`benchmarks/durable-transform/`).

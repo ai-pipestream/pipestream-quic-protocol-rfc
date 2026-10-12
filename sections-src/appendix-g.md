@@ -75,6 +75,9 @@ An application claim should name the effect boundary, identity namespace,
 deduplication retention, token issuer and validator where used, and the actual
 crash/replay cases tested. State whether the evidence covers pure computation,
 authority publication, a particular external sink, or several independently
-committed effects. An API enum such as `RestartSafety` is an application
-declaration, not an independent certification. These examples do not create
-protocol-wide labels such as "exactly once" or "fenced".
+committed effects. An application API label, such as a restart-safety enum,
+is an application declaration, not an independent certification. The
+neutral acceptance matrix's crash and lost-acknowledgment rows exercise the
+protocol-side recovery boundaries (Appendix D); they certify protocol
+subjects, not an application's effect boundary. These examples do not
+create protocol-wide labels such as "exactly once" or "fenced".
