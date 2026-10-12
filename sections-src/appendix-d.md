@@ -1,4 +1,4 @@
-# Implementation Status
+# Implementation Status (Informative)
 
 **RFC Editor Note:** Please remove this entire appendix, and the reference to
 {{RFC7942}}, before publication.
@@ -16,7 +16,29 @@ to be, a catalog of available implementations or their features.
 Readers are advised to note that other implementations may exist.
 
 
-## Summary as of 2026-09-16
+## Status as of 2026-10-11
+
+The current state, superseding the dated snapshots below: Java/Netty and
+Rust/Quinn each implement version 2 (Section 12) completely and advertise
+the durable-work and result-delivery profiles of Section 11.10, and the
+neutral acceptance matrix that certifies the two against each other in
+both roles is green (Section D.6). The clause-level traceability of every
+normative statement of Section 12 to the independent Java implementation
+is complete (`docs/standards/section-12-java-traceability.md`). The
+equivalent-workload comparison against a streaming gRPC coordinator on
+loopback is delivered, with its measurement caveats recorded
+(`benchmarks/durable-transform/report.md`). The authority storage SPI is
+certified equivalent to the version-2 baseline on four object planes
+(filesystem, Postgres, S3 and MongoDB): three run the full matrix fully
+green, and the filesystem plane's only deviation is the documented g2
+host-load flake named in Section D.6
+(`docs/standards/storage-spi-verification.md`).
+
+The dated sections below are historical snapshots, kept with their dates
+as the record of how this state was reached; where they differ from this
+paragraph, this paragraph is current.
+
+## Snapshot as of 2026-09-16 (historical)
 
 Three implementations live in the `implementations/` directory of this
 document's source repository, each with an independent codec and state
@@ -62,16 +84,21 @@ Description:
     and contains no protocol code.
 
 Maturity:
-:   Version 2: complete and certified as described in the summary.
+:   Version 2: complete and certified as described in Section D.1.
     Version 1: Layer 0 endpoint plus sealed-profile libraries.
 
 Coverage:
 :   Version 2 Core, durable work and result delivery in both roles, including
     authorization, restart and replay, retention, refusals, connection ceilings
-    and draining. Version 1: TLS 1.3 with ALPN `pipestream/1`, no 0-RTT,
-    deterministic CBOR control messages, STATUS, CHECKPOINT and GOAWAY; the
-    Section 9.8 sealed profile and the Section 10.6.4 authenticated binding
-    in separate libraries.
+    and draining; the version-2 library and endpoint are the durable listener
+    and the durable client with its exclusive journal. Clause-level
+    traceability maps every normative statement of Section 12 to enforcing
+    code and a test (`docs/standards/section-12-java-traceability.md`, as of
+    2026-09-19: 374 statements, 363 covered, 4 partial with the missing half
+    named in the row, none a gap). Version 1: TLS 1.3 with ALPN
+    `pipestream/1`, no 0-RTT, deterministic CBOR control messages, STATUS,
+    CHECKPOINT and GOAWAY; the Section 9.8 sealed profile and the Section
+    10.6.4 authenticated binding in separate libraries.
 
 Licensing:
 :   MIT.
@@ -93,11 +120,18 @@ Description:
     are separate crates; the driver depends on none of the others.
 
 Maturity:
-:   Version 2: complete and certified as described in the summary.
+:   Version 2: complete and certified as described in Section D.1.
     Version 1: Layer 0, Layer 1 and a Layer 2 subset with the three profiles.
 
 Coverage:
-:   Version 2 Core, durable work and result delivery in both roles. Version 1:
+:   Version 2 Core, durable work and result delivery in both roles; fifteen
+    black-box listener tests exercise the version-2 durable listener over
+    actual QUIC, including empty and 64 KiB copy results, repeated reads,
+    exact root completion, stalled output and control progress, partial
+    frames, full-duration waits, detach/refusal ordering, invalid input and
+    control, credential rotation and owner quotas, a non-reading control
+    peer, exclusive storage reopen, and shutdown with a commit still in
+    flight. Version 1:
     recursive scopes, scope digests, barriers, scoped checkpoints, sealed work
     sets, authenticated session binding and retained authenticated recovery.
     Its Layer 2 advertisement does not name the narrower implemented subset
@@ -139,12 +173,59 @@ Contact:
 
 ## Interoperability Evidence and Its Limits
 
-Version 2 evidence is the neutral matrix described in the summary, run on
-the subjects the repository ships, plus the two applications. Version 1
-evidence is the nine client/server pairings on Layer 0 one-entity transfers
-and the Java/Rust sealed and authenticated scenarios in both directions.
+### Neutral Cross-Language Acceptance Matrix
 
-What this evidence does not show, so that no reader infers it:
+The strongest version-2 evidence is the neutral acceptance matrix. A
+protocol-neutral process driver (the `durable` command of the conformance
+crate, which depends on no PipeStream implementation) runs the Rust and
+Java subjects against each other as separate processes in both
+client/server directions and injects faults (dropped replies, process
+kills at recorded boundaries, disconnects) through a fixture schedule both
+subjects honour. The final run on the subjects the repository ships is
+archive `durable-18d5e94dc4306b7a` (2026-09-16; its MANIFEST of 5491
+entries re-verified after archiving): 66 rows, 64 PASS and 2 WAIVED, no
+FAIL, no unwaived INCOMPLETE. The driver's handoff is
+`conformance/results/async-neutral-v2/handoff.md`.
+
+The two waived rows name missing fixture capabilities, not protocol
+behavior:
+
+- `g7-unsafe-clock-refusal`: no fixture clock on either subject; the
+  fixture interface has no clock-set boundary, and the driver never
+  changes host UTC.
+- `g7-cleanup-interrupted-refund`: the fixture interface has no cleanup
+  boundary (no matching label among its 29 boundary labels); arming a
+  kill during terminal cleanup requires an interface revision.
+
+Two matrix directions are likewise waived as named gaps: the
+java-client/rust-server direction of `g3-store-ownership` (the client
+subject never owns the store) and the rust-client/java-server direction
+of `g4-revocation-vs-publication` (no Java operator revoke command).
+Three resource rows (`r-staging-and-journal-bounds`, `r-network-bytes`
+and `r-native-credit`) pass with their unmeasured scopes named in each
+row's own evidence.
+
+One matrix row is a documented host-load flake: the
+java-client/rust-server direction of
+`g2-kill-after-admission-before-publication`. The fixture kill at
+EXECUTION_CLAIMED races the Java client's post-receipt detach handshake;
+the failure signature is `admit operation failed` with
+`LIMIT_EXCEEDED: control response deadline`, strace-verified on
+2026-09-20 with a 16-run reproduction on both driver builds and both
+local drives, and it is plane-independent (it exists in pre-change
+archives). The row passes on a quiet host; the fix options are
+subject- or row-side and are recorded in
+`docs/standards/storage-spi-verification.md`. It is the only failure in
+the filesystem storage-plane recertification and appears in none of the
+quiet-host acceptance archives.
+
+### Version 1 Evidence
+
+Version 1 evidence is unchanged: the nine client/server pairings on
+Layer 0 one-entity transfers and the Java/Rust sealed and authenticated
+scenarios in both directions.
+
+### What the Evidence Does Not Show
 
 - No implementation claims complete version-1 Layer 0 conformance beyond the
   documented subsets; the common command does not exercise the entire
