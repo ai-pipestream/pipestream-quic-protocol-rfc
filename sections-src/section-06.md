@@ -444,7 +444,7 @@ acknowledgement use the following serialized message:
 ~~~~ cddl
 claim-redemption-frame = {
   flags: claim-redemption-flags,
-  claim-id: uint .gt 0,
+  claim-id: 1..18446744073709551615,
   session-id: tstr,
   state-checksum: bstr .size 32,
 }
@@ -452,6 +452,8 @@ claim-redemption-frame = {
 claim-redemption-flags = uint .le 1
                          ; Bit 0: ACK. All other bits are invalid.
 ~~~~
+
+The authoritative definition is Appendix C.
 
 The request MUST set `flags` to 0. The `session-id` is the stable application
 context identifier associated with the claim, and `state-checksum` is the

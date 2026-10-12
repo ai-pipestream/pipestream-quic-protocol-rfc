@@ -196,7 +196,7 @@ checkpoint-flags = uint .le 1
 
 claim-redemption-frame = {
   flags: claim-redemption-flags,
-  claim-id: uint .gt 0,
+  claim-id: 1..18446744073709551615,
   session-id: tstr,
   state-checksum: bstr .size 32,
 }
@@ -273,8 +273,8 @@ yield-reason = &(
 ; -----------------------------------------------------------
 
 claim-check = {
-  claim-id: uint,
-  entity-id: uint,
+  claim-id: 1..18446744073709551615,
+  entity-id: entity-id,
   ? scope-id: uint,
   expiry-timestamp: uint,
   ? validation: stopping-point-validation,
