@@ -8,7 +8,7 @@ description = "Rust three-node scatter and reassembly example for PipeStream Lay
 
 [dependencies]
 anyhow = "1.0.104"
-clap = { version = "4.6.6", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 pipestream-quinn = { path = "../../implementations/rust-quinn/quinn" }
 tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
