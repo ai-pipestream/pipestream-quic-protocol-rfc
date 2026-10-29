@@ -2,7 +2,7 @@
 
 This document provides implementation guidance and recommended data structures for PipeStream protocol implementations. The content in this document is INFORMATIVE and not part of the normative protocol specification.
 
-## Current Reference Suite (2026-09-16)
+## Current Reference Suite (2026-10-29)
 
 Three independent implementations live under [`implementations/`](implementations/):
 Java/Netty, Rust/Quinn and C++/MsQuic. Each builds a reusable library plus a
@@ -62,11 +62,36 @@ Evidence, all checked in:
   invalid Layer 0 bytes; `pipestream-conformance verify` and `modelcheck` run
   them from [`conformance/run_all.sh`](conformance/run_all.sh), which also
   runs the acceptance matrix when `PIPESTREAM_DURABLE_ACCEPTANCE=1`.
+- **Pluggable storage SPI (merged 2026-09-21, `7009caa0`).** Both lanes
+  implement the SPI described in
+  [`docs/standards/storage-spi-design.md`](docs/standards/storage-spi-design.md)
+  with six backends each (in-memory, filesystem, Postgres, S3, Kafka journal,
+  MongoDB). The authority and client can run on an SPI plane instead of the
+  version-2 native stores; the neutral driver selects the plane per run. The
+  [verification record](docs/standards/storage-spi-verification.md) lists the
+  cross-language layout probe (byte-identical fs stores in both directions)
+  and the acceptance-matrix runs that certified the fs, Postgres, S3 and
+  MongoDB planes equivalent to the version-2 baseline. Those SPI-plane run
+  archives are not committed; `durable-18d5e94dc4306b7a` above remains the
+  last archive in the tree, and the record says where the later ones are.
+- **Draft review pass.** The review-fix plan in
+  [`docs/plans/draft-06-review-fixes.md`](docs/plans/draft-06-review-fixes.md)
+  was executed on 2026-10-12: clarifications, citations and registry fixes
+  across every section, a CDDL drift test over all inline copies, and the
+  BARRIER procedure written down as both lanes implement it. The plan header
+  carries the gate results and the follow-ups it left open.
 
 Known limits: the two waived matrix rows above; the C++ implementation stops
 at Layer 0; [draft-04 readiness](docs/standards/draft04-readiness.md) is the
-historical record of the earlier state. The algorithms below are informative
-and are not implied by a successful interoperability run.
+historical record of the earlier state. Where the two durable-work lanes have
+been found to do the same thing two different ways, the case is listed in the
+[lane divergence register](docs/standards/lane-divergence-register.md) with
+its evidence and is decided one case at a time; one such case (the BARRIER
+parent-mismatch error code) is open against the Java lane as of this date.
+The Java suite has not been rerun since the 2026-10-20 dependency round moved
+the Netty BOM to 4.2.19 while the transport extension stays on its 4.2.17
+baseline. The algorithms below are informative and are not implied by a
+successful interoperability run.
 
 ## 1. Rehydration Readiness Tracking (Fibonacci Heap)
 
