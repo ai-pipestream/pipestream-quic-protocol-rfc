@@ -149,7 +149,15 @@ also bound the time and bytes spent receiving headers, pending result-stream
 creation, per-principal connections, staging files, metadata, queued work,
 retained bytes and storage journals. Global and per-principal exhaustion
 refuses new work, not existing promises. Negotiated limits are ceilings, not
-an unconditional reservation against aggregate deployment quotas.
+an unconditional reservation against aggregate deployment quotas, and the
+point at which an authority's capacity is exhausted depends on its storage
+and is not predictable from earlier admissions or refusals.
+
+The layout of an authority's stores and of a client's journal, including
+how records are keyed and positions numbered, is an implementation choice
+outside the scope of this specification. A peer observes only the
+admission, replay and retention behaviour defined here; a store written by
+one implementation need not be readable by another.
 
 Connection admission can be refused before caller authentication. A server
 rejecting a new QUIC connection SHOULD use transport error CONNECTION_REFUSED
