@@ -269,8 +269,7 @@ The BARRIER payload is 12 octets (17 octets on the wire including the UCF header
 ### Barrier Procedure
 
 BARRIER synchronizes a requester with the completion of a child scope: it
-reports whether the subtree rooted at the parent entity has quiesced. Both
-reference implementations implement the following procedure.
+reports whether the subtree rooted at the parent entity has quiesced.
 
 1. The requester sends a BARRIER request with S=0 (waiting), the Scope ID of
    the child scope, and the Parent Entity ID of the entity whose sub-tree is
@@ -283,7 +282,9 @@ reference implementations implement the following procedure.
    ID that is unknown, or that names the root scope, is rejected with
    PIPESTREAM_SCOPE_INVALID (0x09).
 5. A request whose Parent Entity ID does not match the scope's registered
-   parent MUST be rejected with PIPESTREAM_ENTITY_INVALID (0x05).
+   parent MUST be rejected with PIPESTREAM_ENTITY_INVALID (0x05). The scope
+   itself is registered, so this is not a scope error: a requester that
+   receives it can correct its parent rather than abandon the scope.
 6. Otherwise the receiver responds immediately with a BARRIER frame for the
    same Scope ID, carrying the scope's registered parent entity. The response
    carries S=1 (released) once the scope has closed with its SCOPE_DIGEST,

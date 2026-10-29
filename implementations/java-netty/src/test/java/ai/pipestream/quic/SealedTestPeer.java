@@ -31,6 +31,51 @@ import java.util.function.Consumer;
 final class SealedTestPeer {
   private SealedTestPeer() {}
 
+  /** Declares over a raw connection and requires the acknowledgement, establishing the session. */
+  static void declare(RawClient raw, SealedWork.Declaration request) throws Exception {
+    raw.send(SealedWork.encode(request));
+    SealedWork.requireAcknowledgement(request, SealedWork.decodePayload(raw.response().payload()));
+  }
+
+  /**
+   * Section 6 "Barrier Procedure" refusals, sent as raw frames so each request names its own parent.
+   * The session must already hold {@code childScope} registered under {@code parentEntity} of the
+   * root scope; the server may be either reference lane. Each refusal closes the connection with
+   * the error code, so every refusal uses a fresh connection.
+   */
+  static void assertBarrierProcedure(InetSocketAddress server, Path certs, SealedWork.Declaration root,
+      long childScope, long parentEntity) throws Exception {
+    try (var raw = new RawClient(server, certs)) {
+      declare(raw, root);
+      raw.send(SealedTransport.barrier(new SealedTransport.Barrier(childScope, parentEntity, false)));
+      var response = raw.response();
+      if (response.type() != 0x55) throw new AssertionError("expected a BARRIER response, got type " + response.type());
+      var barrier = SealedTransport.barrier(response.payload());
+      if (barrier.scopeId() != childScope || barrier.parentId() != parentEntity) throw new AssertionError("barrier response identity differs");
+      // Step 5: the scope is registered; the Parent Entity ID is not its parent.
+      raw.send(SealedTransport.barrier(new SealedTransport.Barrier(childScope, parentEntity + 1000, false)));
+      requireClose(raw, Wire.ERROR_ENTITY_INVALID, "parent mismatch");
+    }
+    try (var raw = new RawClient(server, certs)) {
+      declare(raw, root);
+      // Step 3: a frame with the released bit set is not a request.
+      raw.send(SealedTransport.barrier(new SealedTransport.Barrier(childScope, parentEntity, true)));
+      requireClose(raw, Wire.ERROR_ENTITY_INVALID, "released bit on a request");
+    }
+    try (var raw = new RawClient(server, certs)) {
+      declare(raw, root);
+      // Step 4: the root scope has no parent and never uses BARRIER. The encoder refuses scope 0
+      // itself, so the request is assembled by hand: S=0 and reserved bits, Scope ID 0, Parent Entity ID.
+      raw.send(Wire.encodeControl(0x55, java.nio.ByteBuffer.allocate(12).putInt(0).putInt(0).putInt((int) parentEntity).array()));
+      requireClose(raw, 0x09, "root scope");
+    }
+  }
+
+  private static void requireClose(RawClient raw, long expected, String step) throws Exception {
+    long code = raw.closeCode.get(5, TimeUnit.SECONDS);
+    if (code != expected) throw new AssertionError("BARRIER " + step + ": expected close code " + expected + ", got " + code);
+  }
+
   static final class RawClient implements AutoCloseable {
     final MultiThreadIoEventLoopGroup group = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
     Channel datagram; QuicChannel connection; QuicStreamChannel control;

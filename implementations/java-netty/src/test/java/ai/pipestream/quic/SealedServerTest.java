@@ -757,6 +757,25 @@ final class SealedServerTest {
     }
   }
 
+  @Test void barrierProcedureRefusalsFollowSectionSix() throws Exception {
+    Path certs = certificates();
+    try (var fixture = new Fixture(certs, (context, input) -> {
+      if (context.operation() == SealedExecutor.Operation.PROCESS && "dehydrate".equals(context.header().metadata().get("action"))) {
+        input.transferTo(java.io.OutputStream.nullOutputStream()); return new SealedExecutor.Decision(6, null);
+      }
+      return complete(input);
+    })) {
+      var root = declaration(0, null, 0, List.of(1L, 2L), null);
+      try (var client = connect(fixture.server, certs)) {
+        client.declare(root);
+        send(client, ROOT, null, "dehydrate", "root");
+        client.declare(declaration(7, ROOT, 0, List.of(10L, 20L), List.of(10L, 20L)));
+        assertFalse(client.barrier(7).released());
+      }
+      SealedTestPeer.assertBarrierProcedure(fixture.server.address(), certs, root, 7, ROOT.entityId());
+    }
+  }
+
   private final class Fixture implements AutoCloseable {
     final Path database = directory.resolve("sessions.sqlite3");
     final SealedSessionStore sessions;

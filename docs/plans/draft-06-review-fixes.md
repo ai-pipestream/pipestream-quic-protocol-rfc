@@ -21,6 +21,27 @@ Follow-ups found during execution (not part of this plan):
 3. Before this pass the rendered draft artifacts had been stale relative
    to sections-src since 84d1e17e; the final gate now regenerates them.
 
+Follow-up status, checked 2026-10-29:
+
+1. DONE 2026-10-29 (`d986abb4`): the Java mismatch refusal is 0x05, the
+   root scope stays 0x09, and the Barrier Procedure's refusals are tested
+   against both servers. The same work package removed the implementation
+   claim from Section 6 (it belongs in Appendix D under RFC 7942), added a
+   rationale clause to step 5, and gave Section 12 a scope statement for
+   store and journal layout. Register entry D1 in
+   [`lane-divergence-register.md`](../standards/lane-divergence-register.md).
+2. OPEN. `cargo clippy --workspace --all-targets -- -D warnings` on rust
+   1.99.0 fails with three `chunks_exact` with a constant chunk size errors
+   in `pipestream-conformance` and nothing else.
+3. DONE by the WP7 gate.
+
+After this plan: `main` was reconciled with Forgejo on 2026-10-28 (merge
+`25ebc51c`), bringing in the 2026-10-20 Renovate round (Netty 4.2.19, Jackson
+2.22.3, Rust crate bumps). The Rust workspace type-checks and the Java
+reference compiles against the rebuilt transport extension on the merged
+tree; the Java test suite has not been rerun on it. The `docname` is still
+`-05`; bumping to `-06` and submitting were never part of this plan.
+
 Baseline: tag `draft05-review-baseline` (main `b80f8775`). Source of truth for
 the draft is `sections-src/*.md`; regenerate with `./build.sh core 05`.
 

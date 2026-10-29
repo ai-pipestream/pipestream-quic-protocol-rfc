@@ -34,6 +34,15 @@ green, and the filesystem plane's only deviation is the documented g2
 host-load flake named in Section D.6
 (`docs/standards/storage-spi-verification.md`).
 
+The Barrier Procedure of Section 6 is implemented by both lanes: Rust as a
+Layer 1 endpoint, Java within its sealed-profile library (Section 9.8). On
+2026-10-29 the Java refusal for a parent mismatch (step 5) was corrected
+from PIPESTREAM_SCOPE_INVALID to PIPESTREAM_ENTITY_INVALID; the
+released-bit, root-scope and parent-mismatch refusals are now exercised
+against both servers by the Java suite (`SealedServerTest`,
+`SealedInteropTest`). The frozen vectors cover only the stateless cases,
+since the same BARRIER bytes are a valid response and an invalid request.
+
 The dated sections below are historical snapshots, kept with their dates
 as the record of how this state was reached; where they differ from this
 paragraph, this paragraph is current.

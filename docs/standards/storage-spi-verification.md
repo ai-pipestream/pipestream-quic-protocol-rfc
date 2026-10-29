@@ -11,6 +11,10 @@ the pinned artifacts in `test-vectors/storage-spi/`.
 | Java (`ai.pipestream.quic.storage`) | `agent/storage-spi-java` | `1996085f` | 409 tests, 0 failures (`mvn -q test -Dtest='ai.pipestream.quic.storage.**'`) |
 | Rust (`pipestream-storage`) | `agent/storage-spi-rust` | `1cab5237` | 81 tests incl. docker contract runs + adversarial/concurrency/leak/property suites, 0 failures; `clippy -D warnings` clean |
 
+Both branches were merged into `main` on 2026-09-21 through
+`feat/durable-work-results-v2` (merge `7009caa0`) and the branch names were
+deleted afterwards; the head commits above remain reachable from `main`.
+
 Both lanes implement all six backends — in-memory, filesystem, Postgres, S3
 (object role), Kafka (journal role), MongoDB — against the pinned decisions in
 the design note. Every backend passes the shared per-role contract suites; the
@@ -58,6 +62,29 @@ interlock across languages is fcntl `F_SETLK` on both sides (pinned decision 7).
 - Cross-language parity follow-up: the Rust journal adopted the Java marker
   semantics (a wiped log on an initialized root is CORRUPT, never a silent
   fresh start) in `2f961afb`, so both lanes fail data loss identically.
+
+## Where the run archives are (recorded 2026-10-29)
+
+The acceptance-matrix archives cited below are not in this repository. The
+last committed archive under `conformance/results/async-neutral-v2/runs/` is
+`durable-18d5e94dc4306b7a`; every `durable-18d6…`/`durable-18d7…` run named in
+this record was produced afterwards and never added, so a reader of `main`
+cannot open them. Their whereabouts as of this date:
+
+| Run | Status | Where |
+|---|---|---|
+| `durable-18d7051e17c5c0f2` (fs, GREEN) | retained, 427 MB for the four together | krick-1 workstation: untracked in the `agent/rfc-kimi-neutral-v2` worktree and as tar.gz with SHA-256 sums in `~/.rfc-tmp/archive-2026-10-28-reconcile/run-evidence/` |
+| `durable-18d753f0bf0b1623` (mongo, GREEN) | retained | same |
+| `durable-18d75ab3097b2c07` (postgres, GREEN) | retained | same |
+| `durable-18d75ce790106ebd` (s3, GREEN) | retained | same |
+| `durable-18d6fd296148339e`, `durable-18d702e2f77fb30a` | retained, ~1.1 GB each | krick-1: `~/.rfc-tmp/spi-acceptance-2/` and `spi-acceptance-3/artifacts/runs/` |
+| `durable-18d6fbf9b0f2cd9f`, `durable-18d7380f776e6c78`, `durable-18d73c1789d2c4fc`, `durable-18d7587e0fa5f8ee` | not located | no copy found on krick-1 on 2026-10-29; the results stand on this record and the fixing commits it names |
+
+The four GREEN archives contain only disposable test material (certificates
+issued by the test CA `PipeStream-Durable-CA` for `CN=localhost`, the probe
+database string `postgres:probe@127.0.0.1`, local filesystem paths). Whether
+to commit them (the tree already carries ~890 MB of earlier runs), publish them
+elsewhere, or let this table be the record is an open owner decision.
 
 ## SPI-plane certification runs (2026-09-20)
 

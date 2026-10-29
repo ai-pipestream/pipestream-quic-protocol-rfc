@@ -294,6 +294,25 @@ the pinned native provenance and remaining control/data-credit work. Rustls
 remains on the 0.23 series required by Quinn rather than the 0.24 development
 series.
 
+Dependency updates since then arrive as Renovate pull requests on Forgejo. The
+2026-10-20 round moved the Java BOM to Netty `4.2.19.Final` and Jackson 2.22.3
+and rolled the Rust crates (clap 4.6.7, rustls 0.23.46, tokio 1.53.3); the
+transport extension stays at its `4.2.17.Final-pipestream.4` coordinates and
+4.2.17 upstream baseline, so the official `io.netty` modules and the modified
+QUIC classes are now at different patch levels. On 2026-10-28 the merged tree
+built the extension from source (native tests included) and compiled the Java
+reference against it; the Java test suite has not yet been rerun on that
+combination. The transport extension is not in any registry: a fresh machine
+must run `implementations/java-netty/transport/build.sh` before any Maven
+command, exactly as `conformance/run_all.sh` does.
+
+Both reference lanes also ship the pluggable storage SPI (six backends each)
+merged on 2026-09-21; its design, adoption plans and certification record are
+under [`docs/standards/`](docs/standards/) (`storage-spi-*.md`). Where the two
+lanes have been found to do the same thing two ways, the case is recorded in
+the [lane divergence register](docs/standards/lane-divergence-register.md) and
+decided one case at a time.
+
 ### Styling Conventions for Rendering
 
 To ensure the IETF Datatracker renders diagrams and code correctly in both HTML and Plain Text, use the following fences:
@@ -343,7 +362,7 @@ install Bundler for your user and keep the gems inside the checkout:
 
 ```bash
 gem install --user-install bundler
-export PATH="1000 4 24 27 30 46 100 111 114 973 1000ruby -e 'print Gem.user_dir')/bin:"
+export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
 bundle config set --local path vendor/bundle
 bundle install
 ```
@@ -382,12 +401,42 @@ idnits --verbose draft-krickert-pipestream-05.txt
 Submit the generated **`.xml`** file to the IETF Datatracker:
 [https://datatracker.ietf.org/submit/](https://datatracker.ietf.org/submit/)
 
----
+The `docname` in `sections-src/frontmatter.md` is still `-05`. The review-fix
+pass recorded in [`docs/plans/draft-06-review-fixes.md`](docs/plans/draft-06-review-fixes.md)
+landed on `main` on 2026-10-12 and is what a `-06` would contain; bumping the
+number and submitting are separate, deliberate steps that nothing in this
+repository performs.
+
+## Repository Workflow
+
+- **Forgejo is the source of truth**
+  (`https://git.rokkon.com/ai-pipestream/pipestream-quic-protocol-rfc`). Pull
+  requests, Renovate updates and merges happen there.
+- **GitHub (`ai-pipestream/pipestream-quic-protocol-rfc`) is an automatic push
+  mirror** of Forgejo. Do not push to it; a commit pushed to Forgejo appears on
+  GitHub within seconds, and pushing the same commit to both is harmless but
+  pointless.
+- **This repository has no continuous integration of its own.** Every gate is
+  run locally and its result is recorded in the commit or in `docs/standards/`:
+  `./build.sh core 05` with `idnits`; `cargo test --locked --workspace` and
+  `cargo clippy -D warnings` in `implementations/rust-quinn`; the transport
+  build followed by `mvn verify` in `implementations/java-netty`;
+  `./conformance/run_all.sh` for the suite. A green merge on Forgejo therefore
+  means "someone ran the gates", not "a machine did".
+- Long-lived local work must be pushed. On 2026-10-28 six weeks of `main`
+  (124 commits) existed only on one workstation before being reconciled with
+  Forgejo at `25ebc51c`.
 
 ## Repository Contents
 
 - **`REFERENCE_IMPLEMENTATION.md`**: Reference-suite status plus informative guidance on algorithms.
 - **`OVERVIEW.md`**: High-level architectural summary.
+- **`sections-src/`**: The draft's source of truth, one Markdown file per section and appendix.
+- **`implementations/`**: Java/Netty, Rust/Quinn and C++/MsQuic reference code; `java-netty/transport/` holds the source-pinned QUIC transport extension.
+- **`conformance/`**: `run_all.sh`, the neutral acceptance driver's handoffs and committed run archives under `results/`.
+- **`test-vectors/`**: Frozen Layer 0 bytes, commitments and the storage SPI probe/report pins.
+- **`docs/standards/`**: Design records, decision logs, traceability, verification records and the lane divergence register.
+- **`docs/plans/`**: Dated execution plans with their status headers.
 - **`advocacy/`**: IETF process materials (prior-art survey, DISPATCH kit, ANRW paper draft, submission checklist). Not part of any Internet-Draft.
 - **`build/`**: (Ignored) Temporary build artifacts.
 

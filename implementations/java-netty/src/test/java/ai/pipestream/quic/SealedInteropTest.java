@@ -284,6 +284,21 @@ final class SealedInteropTest {
         SealedWork.sha256().digest(bytes), Map.of("pipestream.action", action, "pipestream.session-id", SESSION), null);
   }
 
+  @Test void barrierProcedureRefusalsFollowSectionSixAgainstRust() throws Exception {
+    Path certs = certificates(), state = directory.resolve("barrier-procedure");
+    var root = declaration(0, null, 0, List.of(1L, 2L), List.of(1L, 2L));
+    var parent = new SealedWork.EntityKey(0, 1);
+    try (RustServer server = new RustServer(state, certs)) {
+      try (SealedClient client = connect(server, certs, SealedTransport.Limits.defaults())) {
+        client.declare(root);
+        send(client, parent, null, "dehydrate", "root");
+        client.declare(declaration(7, parent, 0, List.of(10L), List.of(10L)));
+        assertFalse(client.barrier(7).released());
+      }
+      SealedTestPeer.assertBarrierProcedure(server.address, certs, root, 7, parent.entityId());
+    }
+  }
+
   private static SealedWork.Declaration declaration(long scope, SealedWork.EntityKey parent, int sequence,
       List<Long> ids, List<Long> entire) throws Exception {
     return new SealedWork.Declaration(SESSION, PRODUCER, scope, parent, BigInteger.valueOf(sequence), ids,
