@@ -489,7 +489,10 @@ public final class SealedServer implements AutoCloseable {
           if (barrier.released()) throw Wire.entity("producer barrier carries release");
           peer.enqueue(encoded.length, () -> sessions.ancestry(requireSession(), peer.producer, barrier.scopeId()), ancestry -> {
             peer.cache(ancestry); var info = ancestry.getFirst();
-            if (info.parent() == null || info.parent().entityId() != barrier.parentId()) throw SealedScope.invalid("barrier parent mismatch");
+            // Section 6 Barrier Procedure: the root scope is a scope error (step 4); a registered scope whose
+            // parent differs from the request is an entity error (step 5), so the requester corrects its parent.
+            if (info.parent() == null) throw SealedScope.invalid("root scope does not use BARRIER");
+            if (info.parent().entityId() != barrier.parentId()) throw Wire.entity("barrier parent mismatch");
             peer.write(SealedTransport.barrier(new SealedTransport.Barrier(barrier.scopeId(), barrier.parentId(), info.closed())));
           }); return;
         }
