@@ -69,22 +69,24 @@ The acceptance-matrix archives cited below are not in this repository. The
 last committed archive under `conformance/results/async-neutral-v2/runs/` is
 `durable-18d5e94dc4306b7a`; every `durable-18d6…`/`durable-18d7…` run named in
 this record was produced afterwards and never added, so a reader of `main`
-cannot open them. Their whereabouts as of this date:
+cannot open them. The owner's decision (2026-10-29) is that run evidence is
+archived in Google Drive, not kept on a workstation and not committed; the
+local copies were deleted after the upload verified by checksum.
+
+Drive folder (owner's account, unshared): `pipestream-rfc/evidence-2026-10-28/`
 
 | Run | Status | Where |
 |---|---|---|
-| `durable-18d7051e17c5c0f2` (fs, GREEN) | retained, 427 MB for the four together | krick-1 workstation: untracked in the `agent/rfc-kimi-neutral-v2` worktree and as tar.gz with SHA-256 sums in `~/.rfc-tmp/archive-2026-10-28-reconcile/run-evidence/` |
-| `durable-18d753f0bf0b1623` (mongo, GREEN) | retained | same |
-| `durable-18d75ab3097b2c07` (postgres, GREEN) | retained | same |
-| `durable-18d75ce790106ebd` (s3, GREEN) | retained | same |
-| `durable-18d6fd296148339e`, `durable-18d702e2f77fb30a` | retained, ~1.1 GB each | krick-1: `~/.rfc-tmp/spi-acceptance-2/` and `spi-acceptance-3/artifacts/runs/` |
-| `durable-18d6fbf9b0f2cd9f`, `durable-18d7380f776e6c78`, `durable-18d73c1789d2c4fc`, `durable-18d7587e0fa5f8ee` | not located | no copy found on krick-1 on 2026-10-29; the results stand on this record and the fixing commits it names |
+| `durable-18d7051e17c5c0f2` (fs, GREEN) | archived | `run-evidence/<run>.tar.gz` + `SHA256SUMS` (four archives, 180 MB; `rclone check` 0 differences) |
+| `durable-18d753f0bf0b1623` (mongo, GREEN) | archived | same |
+| `durable-18d75ab3097b2c07` (postgres, GREEN) | archived | same |
+| `durable-18d75ce790106ebd` (s3, GREEN) | archived | same |
+| `durable-18d6fd296148339e`, `durable-18d702e2f77fb30a` (fs, 63 PASS + g2 flake) | archived | `spi-acceptance-runs/<run>.tar.gz` + `SHA256SUMS` |
+| `durable-18d6fbf9b0f2cd9f`, `durable-18d7380f776e6c78`, `durable-18d73c1789d2c4fc`, `durable-18d7587e0fa5f8ee` | not located | no copy found on 2026-10-29; the results stand on this record and the fixing commits it names |
 
-The four GREEN archives contain only disposable test material (certificates
-issued by the test CA `PipeStream-Durable-CA` for `CN=localhost`, the probe
-database string `postgres:probe@127.0.0.1`, local filesystem paths). Whether
-to commit them (the tree already carries ~890 MB of earlier runs), publish them
-elsewhere, or let this table be the record is an open owner decision.
+The archives contain only disposable test material (certificates issued by
+the test CA `PipeStream-Durable-CA` for `CN=localhost`, the probe database
+string `postgres:probe@127.0.0.1`, local filesystem paths).
 
 ## SPI-plane certification runs (2026-09-20)
 
