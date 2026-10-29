@@ -23,11 +23,13 @@ Follow-ups found during execution (not part of this plan):
 
 Follow-up status, checked 2026-10-29:
 
-1. OPEN. `SealedServer.java:492` still raises `SealedScope.invalid("barrier
-   parent mismatch")`, i.e. 0x09, against Section 6 "Barrier Procedure" step
-   5 (0x05). Registered as D1 in
-   [`lane-divergence-register.md`](../standards/lane-divergence-register.md);
-   the register, not this plan, carries the decision.
+1. DONE 2026-10-29 (`d986abb4`): the Java mismatch refusal is 0x05, the
+   root scope stays 0x09, and the Barrier Procedure's refusals are tested
+   against both servers. The same work package removed the implementation
+   claim from Section 6 (it belongs in Appendix D under RFC 7942), added a
+   rationale clause to step 5, and gave Section 12 a scope statement for
+   store and journal layout. Register entry D1 in
+   [`lane-divergence-register.md`](../standards/lane-divergence-register.md).
 2. OPEN. `cargo clippy --workspace --all-targets -- -D warnings` on rust
    1.99.0 fails with three `chunks_exact` with a constant chunk size errors
    in `pipestream-conformance` and nothing else.

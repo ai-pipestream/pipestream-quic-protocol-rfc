@@ -86,8 +86,9 @@ at Layer 0; [draft-04 readiness](docs/standards/draft04-readiness.md) is the
 historical record of the earlier state. Where the two durable-work lanes have
 been found to do the same thing two different ways, the case is listed in the
 [lane divergence register](docs/standards/lane-divergence-register.md) with
-its evidence and is decided one case at a time; one such case (the BARRIER
-parent-mismatch error code) is open against the Java lane as of this date.
+its evidence and is decided one case at a time; the one wire-visible case
+found so far (the BARRIER parent-mismatch error code) was fixed in the Java
+lane on 2026-10-29 and is now tested against both servers.
 The Java suite has not been rerun since the 2026-10-20 dependency round moved
 the Netty BOM to 4.2.19 while the transport extension stays on its 4.2.17
 baseline. The algorithms below are informative and are not implied by a
