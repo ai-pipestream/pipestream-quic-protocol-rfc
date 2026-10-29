@@ -194,3 +194,16 @@ refusal borderline against the physical WAL offset (bounded_vfs.c:130-133),
 so the refusal at the capacity boundary is checkpoint-timing nondeterministic
 on the Java authority (3/6 repro iterations committed instead of refusing).
 The harness is being fixed to source refusal evidence from the first failure.
+
+Finding closed, test-side (2026-10-29): the full Java suite on the merged
+tree (1255 tests, Netty 4.2.19 BOM with the 4.2.17 transport baseline)
+failed once in `ConcurrencyStormFileJournalTest`
+(`concurrentReplaySnapshotsDuringAppendCommitStormAreConsistent`) and passed
+3/3 in isolation. Diagnosis: the test registered each expected record in its
+map *after* `appendIntent` returned, so a snapshot reader that replayed the
+intent the moment it was durable looked it up, found nothing and reported
+"expected array was <null>". The file journal's fsync widened that window;
+the journal itself replayed exactly what was written. Fixed by registering
+the record before the append (`ConcurrencyStormJournalTest`); five reruns of
+both journal storm classes pass. The Rust storm test replays only after its
+writers finish and has no equivalent window.

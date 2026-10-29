@@ -156,8 +156,11 @@ abstract class ConcurrencyStormJournalTest {
             for (int i = 0; i < INTENTS_PER_APPEND_THREAD; i++) {
               String intentId = "snap-a" + appender + "-i" + i;
               byte[] record = bytes("record-of-" + intentId);
-              long cursor = journal.appendIntent(new Journal.Intent(intentId, record));
+              // Register the expected record before the append: a snapshot reader may see the
+              // intent the moment it is durable, and must find it here rather than conclude
+              // the journal replayed a record nobody wrote.
               records.put(intentId, record);
+              long cursor = journal.appendIntent(new Journal.Intent(intentId, record));
               maxCursor.accumulateAndGet(cursor, Math::max);
               pending.offer(intentId);
               if (i == 0) firstAppend.countDown();
