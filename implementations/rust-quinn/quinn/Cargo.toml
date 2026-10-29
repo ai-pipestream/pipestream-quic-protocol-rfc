@@ -12,16 +12,16 @@ name = "pipestream_quic"
 [dependencies]
 anyhow = "1.0.104"
 pipestream-core = { path = ".." }
-quinn = "0.11.11"
+quinn = "0.11.12"
 # The V2 TLS error adapter depends on this version's read_handshake boundary.
-quinn-proto = { version = "=0.11.17", default-features = false }
-rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
-sha2 = "0.11.0"
-tokio = { version = "1.53.1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+quinn-proto = { version = "=0.11.19", default-features = false }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+sha2 = "0.11.1"
+tokio = { version = "1.53.3", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
 tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["fs"] }
+rustix = { version = "1.1.5", features = ["fs"] }
 
 [dev-dependencies]
 rcgen = "0.14.10"
