@@ -77,11 +77,11 @@ Drive folder (owner's account, unshared): `pipestream-rfc/evidence-2026-10-28/`
 
 | Run | Status | Where |
 |---|---|---|
-| `durable-18d7051e17c5c0f2` (fs, GREEN) | archived | `run-evidence/<run>.tar.gz` + `SHA256SUMS` (four archives, 180 MB; `rclone check` 0 differences) |
+| `durable-18d7051e17c5c0f2` (fs, GREEN) | archived, two snapshots | `run-evidence/<run>.tar.gz` + `SHA256SUMS` (four archives, 180 MB; `rclone check` 0 differences) is the trimmed copy the driver left in the worktree; `run-evidence/<run>.spi-acceptance-4.tar.gz` + `SHA256SUMS.spi-acceptance-4` (1 GB) is the producer's original with the subjects' full store directories. No file common to both differs; the original has 94 more files and the stores' directory trees. |
 | `durable-18d753f0bf0b1623` (mongo, GREEN) | archived | same |
 | `durable-18d75ab3097b2c07` (postgres, GREEN) | archived | same |
 | `durable-18d75ce790106ebd` (s3, GREEN) | archived | same |
-| `durable-18d6fd296148339e`, `durable-18d702e2f77fb30a` (fs, 63 PASS + g2 flake) | archived | `spi-acceptance-runs/<run>.tar.gz` + `SHA256SUMS` |
+| `durable-18d6fd296148339e`, `durable-18d702e2f77fb30a` (fs, 63 PASS + g2 flake) | archived | `spi-acceptance-runs/<run>.tar.gz` + `SHA256SUMS` (1 GB each, producer originals with full subject stores; `rclone check` 0 differences) |
 | `durable-18d6fbf9b0f2cd9f`, `durable-18d7380f776e6c78`, `durable-18d73c1789d2c4fc`, `durable-18d7587e0fa5f8ee` | not located | no copy found on 2026-10-29; the results stand on this record and the fixing commits it names |
 
 The archives contain only disposable test material (certificates issued by
