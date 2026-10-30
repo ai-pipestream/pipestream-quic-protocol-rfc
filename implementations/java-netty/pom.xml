@@ -16,10 +16,10 @@
     <pipestream.transport.version>4.2.17.Final-pipestream.4</pipestream.transport.version>
     <jackson.version>2.22.3</jackson.version>
     <junit.version>6.1.3</junit.version>
-    <postgresql.version>42.7.13</postgresql.version>
+    <postgresql.version>42.7.14</postgresql.version>
     <awssdk.version>2.55.1</awssdk.version>
-    <kafka.version>4.2.1</kafka.version>
-    <mongodb.version>5.12.0</mongodb.version>
+    <kafka.version>4.4.0</kafka.version>
+    <mongodb.version>5.14.0</mongodb.version>
     <sqlite.version>3.53.4.0</sqlite.version>
     <test.excludedGroups>sealed-interop</test.excludedGroups>
   </properties>
@@ -176,7 +176,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.6.0</version>
+        <version>3.6.1</version>
         <configuration>
           <useModulePath>false</useModulePath>
           <argLine>--enable-native-access=ALL-UNNAMED</argLine>

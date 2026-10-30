@@ -14,4 +14,4 @@ index-core = { path = "../index-core" }
 pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 sha2 = "=0.11.1"
-tokio = { version = "=1.54.0", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread", "time"] }
