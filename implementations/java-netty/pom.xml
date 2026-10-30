@@ -14,7 +14,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <netty.version>4.2.19.Final</netty.version>
     <pipestream.transport.version>4.2.17.Final-pipestream.4</pipestream.transport.version>
-    <jackson.version>2.22.3</jackson.version>
+    <jackson.version>2.22.4</jackson.version>
     <junit.version>6.1.3</junit.version>
     <postgresql.version>42.7.14</postgresql.version>
     <awssdk.version>2.55.1</awssdk.version>
