@@ -8,10 +8,10 @@ name = "index-authority"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "=1.0.104"
-clap = { version = "=4.6.7", features = ["derive"] }
+anyhow = "=1.0.105"
+clap = { version = "=4.6.10", features = ["derive"] }
 index-core = { path = "../index-core" }
 pipestream-quinn = { path = "../../../implementations/rust-quinn/quinn" }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
-sha2 = "=0.11.1"
+sha2 = "=0.11.2"
 tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread", "time", "signal"] }
